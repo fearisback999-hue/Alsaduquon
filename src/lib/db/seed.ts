@@ -1,0 +1,65 @@
+import { createClient } from "@libsql/client";
+import { drizzle } from "drizzle-orm/libsql";
+import { settings } from "./schema";
+import { eq } from "drizzle-orm";
+
+const DEFAULT_SETTINGS = [
+  // Pipeline
+  { key: "niche_score_threshold", value: "7.5", type: "number" as const, group: "pipeline" as const, description: "Minimum composite score for a niche to pass scoring" },
+  { key: "concepts_per_niche", value: "5", type: "number" as const, group: "pipeline" as const, description: "Number of design concepts generated per approved niche" },
+  { key: "max_image_attempts", value: "3", type: "number" as const, group: "pipeline" as const, description: "Maximum DALL-E generation attempts per concept" },
+  { key: "mockups_per_product", value: "10", type: "number" as const, group: "pipeline" as const, description: "Target mockup count per product" },
+  { key: "approval_batch_size", value: "5", type: "number" as const, group: "pipeline" as const, description: "Number of listings per approval batch" },
+  { key: "approval_mode", value: "manual", type: "string" as const, group: "pipeline" as const, description: "Approval mode: manual or auto" },
+
+  // Pricing
+  { key: "base_price", value: "25.00", type: "number" as const, group: "pricing" as const, description: "Minimum retail price in USD" },
+  { key: "margin_percent", value: "40", type: "number" as const, group: "pricing" as const, description: "Target profit margin percentage" },
+  { key: "max_title_length", value: "140", type: "number" as const, group: "pricing" as const, description: "Maximum Etsy listing title length" },
+  { key: "max_tags", value: "13", type: "number" as const, group: "pricing" as const, description: "Maximum Etsy tags per listing" },
+
+  // Limits
+  { key: "max_daily_cost", value: "10.00", type: "number" as const, group: "limits" as const, description: "Maximum daily spend in USD" },
+  { key: "max_daily_listings", value: "5", type: "number" as const, group: "limits" as const, description: "Maximum listings published per day" },
+
+  // API
+  { key: "dalle_model", value: "dall-e-3", type: "string" as const, group: "api" as const, description: "DALL-E model to use for image generation" },
+  { key: "dalle_quality", value: "hd", type: "string" as const, group: "api" as const, description: "DALL-E image quality: hd or standard" },
+  { key: "gpt_model", value: "gpt-4.1", type: "string" as const, group: "api" as const, description: "GPT model for text generation" },
+
+  // Product types
+  { key: "enabled_product_types", value: '["premium_tshirt","hoodie","blanket"]', type: "json" as const, group: "pipeline" as const, description: "Product types to create per design" },
+  { key: "default_colors", value: '["black","navy","white","grey"]', type: "json" as const, group: "pipeline" as const, description: "Default color variants" },
+];
+
+async function seed() {
+  const client = createClient({
+    url: process.env.TURSO_DATABASE_URL!,
+    authToken: process.env.TURSO_AUTH_TOKEN,
+  });
+
+  const db = drizzle(client);
+
+  console.log("Seeding default settings...");
+
+  for (const setting of DEFAULT_SETTINGS) {
+    const existing = await db.select().from(settings).where(eq(settings.key, setting.key)).get();
+    if (!existing) {
+      await db.insert(settings).values({
+        ...setting,
+        updatedAt: new Date().toISOString(),
+      });
+      console.log(`  + ${setting.key} = ${setting.value}`);
+    } else {
+      console.log(`  ~ ${setting.key} already exists, skipping`);
+    }
+  }
+
+  console.log("Seed complete.");
+  process.exit(0);
+}
+
+seed().catch((err) => {
+  console.error("Seed failed:", err);
+  process.exit(1);
+});

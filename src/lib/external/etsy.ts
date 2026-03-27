@@ -1,0 +1,198 @@
+import { ExternalAPIError } from "@/lib/errors";
+import { withRetry } from "@/lib/retry";
+import { rateLimit } from "./rate-limiter";
+
+const BASE_URL = "https://openapi.etsy.com/v3";
+
+// OAuth 2.0 token management
+let cachedAccessToken: string | null = null;
+let tokenExpiresAt = 0;
+
+async function refreshAccessToken(): Promise<string> {
+  const response = await fetch("https://api.etsy.com/v3/public/oauth/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      client_id: process.env.ETSY_CLIENT_ID!,
+      redirect_uri: "https://localhost",
+      refresh_token: process.env.ETSY_REFRESH_TOKEN!,
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new ExternalAPIError("Etsy OAuth", response.status, `Token refresh failed: ${body}`);
+  }
+
+  const data = (await response.json()) as { access_token: string; expires_in: number; refresh_token: string };
+
+  cachedAccessToken = data.access_token;
+  tokenExpiresAt = Date.now() + (data.expires_in - 60) * 1000; // Refresh 60s before expiry
+
+  return data.access_token;
+}
+
+async function getAccessToken(): Promise<string> {
+  if (cachedAccessToken && Date.now() < tokenExpiresAt) {
+    return cachedAccessToken;
+  }
+  return refreshAccessToken();
+}
+
+async function etsyFetch(path: string, options?: RequestInit): Promise<unknown> {
+  await rateLimit("etsy");
+  const token = await getAccessToken();
+
+  const response = await fetch(`${BASE_URL}${path}`, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "x-api-key": process.env.ETSY_CLIENT_ID!,
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new ExternalAPIError("Etsy", response.status, body);
+  }
+
+  if (response.status === 204) return null;
+  return response.json();
+}
+
+export async function createDraftListing(data: {
+  title: string;
+  description: string;
+  price: number;
+  tags: string[];
+  quantity?: number;
+  who_made?: string;
+  when_made?: string;
+  taxonomy_id?: number;
+  shipping_profile_id?: number;
+}): Promise<{ listing_id: number; url: string; state: string }> {
+  const shopId = process.env.ETSY_SHOP_ID!;
+  return withRetry(() =>
+    etsyFetch(`/application/shops/${shopId}/listings`, {
+      method: "POST",
+      body: JSON.stringify({
+        title: data.title,
+        description: data.description,
+        price: { amount: Math.round(data.price * 100), divisor: 100, currency_code: "USD" },
+        quantity: data.quantity ?? 999,
+        tags: data.tags.slice(0, 13),
+        who_made: data.who_made ?? "i_did",
+        when_made: data.when_made ?? "2020_2025",
+        taxonomy_id: data.taxonomy_id ?? 482, // Clothing > Shirts & Tees
+        type: "physical",
+        is_digital: false,
+        state: "draft",
+        ...(data.shipping_profile_id && { shipping_profile_id: data.shipping_profile_id }),
+      }),
+    }),
+  ) as Promise<{ listing_id: number; url: string; state: string }>;
+}
+
+export async function uploadListingImage(
+  listingId: number,
+  imageUrl: string,
+  rank: number = 1,
+): Promise<{ listing_image_id: number }> {
+  const shopId = process.env.ETSY_SHOP_ID!;
+
+  // Download image first
+  const imageResponse = await fetch(imageUrl);
+  const imageBuffer = await imageResponse.arrayBuffer();
+  const blob = new Blob([imageBuffer], { type: "image/png" });
+
+  const formData = new FormData();
+  formData.append("image", blob, `mockup-${rank}.png`);
+  formData.append("rank", String(rank));
+
+  const token = await getAccessToken();
+
+  const response = await fetch(
+    `${BASE_URL}/application/shops/${shopId}/listings/${listingId}/images`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "x-api-key": process.env.ETSY_CLIENT_ID!,
+      },
+      body: formData,
+    },
+  );
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new ExternalAPIError("Etsy", response.status, `Image upload failed: ${body}`);
+  }
+
+  return response.json() as Promise<{ listing_image_id: number }>;
+}
+
+export async function publishListing(listingId: number): Promise<void> {
+  const shopId = process.env.ETSY_SHOP_ID!;
+  await withRetry(() =>
+    etsyFetch(`/application/shops/${shopId}/listings/${listingId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ state: "active" }),
+    }),
+  );
+}
+
+export async function getListing(listingId: number): Promise<unknown> {
+  return withRetry(() => etsyFetch(`/application/listings/${listingId}`));
+}
+
+export async function updateListing(
+  listingId: number,
+  data: { title?: string; description?: string; price?: number; tags?: string[] },
+): Promise<unknown> {
+  const shopId = process.env.ETSY_SHOP_ID!;
+  const body: Record<string, unknown> = {};
+  if (data.title) body.title = data.title;
+  if (data.description) body.description = data.description;
+  if (data.price) body.price = { amount: Math.round(data.price * 100), divisor: 100, currency_code: "USD" };
+  if (data.tags) body.tags = data.tags.slice(0, 13);
+
+  return withRetry(() =>
+    etsyFetch(`/application/shops/${shopId}/listings/${listingId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+export async function getShopReceipts(
+  options?: { minCreated?: number; maxCreated?: number; limit?: number; offset?: number },
+): Promise<{ count: number; results: Array<{ receipt_id: number; order_id: number; status: string; grandtotal: { amount: number; divisor: number }; transactions: Array<{ listing_id: number; quantity: number; price: { amount: number; divisor: number } }> }> }> {
+  const shopId = process.env.ETSY_SHOP_ID!;
+  const params = new URLSearchParams();
+  if (options?.minCreated) params.set("min_created", String(options.minCreated));
+  if (options?.maxCreated) params.set("max_created", String(options.maxCreated));
+  if (options?.limit) params.set("limit", String(options.limit));
+  if (options?.offset) params.set("offset", String(options.offset));
+
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return withRetry(() =>
+    etsyFetch(`/application/shops/${shopId}/receipts${query}`),
+  ) as Promise<{ count: number; results: Array<{ receipt_id: number; order_id: number; status: string; grandtotal: { amount: number; divisor: number }; transactions: Array<{ listing_id: number; quantity: number; price: { amount: number; divisor: number } }> }> }>;
+}
+
+export async function getShopListings(
+  state?: "active" | "inactive" | "draft" | "expired",
+  limit: number = 25,
+  offset: number = 0,
+): Promise<{ count: number; results: Array<{ listing_id: number; title: string; state: string; views: number; num_favorers: number }> }> {
+  const shopId = process.env.ETSY_SHOP_ID!;
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (state) params.set("state", state);
+
+  return withRetry(() =>
+    etsyFetch(`/application/shops/${shopId}/listings?${params.toString()}`),
+  ) as Promise<{ count: number; results: Array<{ listing_id: number; title: string; state: string; views: number; num_favorers: number }> }>;
+}
