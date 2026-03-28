@@ -3,8 +3,10 @@ import { createClient } from "@libsql/client";
 import * as schema from "./schema";
 
 function createDb() {
+  const dbUrl = process.env.TURSO_DATABASE_URL || "file:./neopod.db";
+
   const client = createClient({
-    url: process.env.TURSO_DATABASE_URL!,
+    url: dbUrl,
     authToken: process.env.TURSO_AUTH_TOKEN,
   });
 

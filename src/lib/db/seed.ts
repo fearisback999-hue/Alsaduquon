@@ -33,8 +33,9 @@ const DEFAULT_SETTINGS = [
 ];
 
 async function seed() {
+  const dbUrl = process.env.TURSO_DATABASE_URL || "file:./neopod.db";
   const client = createClient({
-    url: process.env.TURSO_DATABASE_URL!,
+    url: dbUrl,
     authToken: process.env.TURSO_AUTH_TOKEN,
   });
 
