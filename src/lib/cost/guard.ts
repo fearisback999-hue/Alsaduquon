@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { dailyCosts, costEntries } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { BudgetExceededError, ListingLimitError } from "@/lib/errors";
 
 function today(): string {
@@ -30,12 +30,33 @@ export async function canAfford(estimatedCost: number): Promise<boolean> {
   return remaining >= estimatedCost;
 }
 
-export async function enforcebudget(estimatedCost: number): Promise<void> {
-  const budget = await checkBudget();
-  if (budget.remaining < estimatedCost) {
-    throw new BudgetExceededError(budget.used + estimatedCost, budget.max);
+/**
+ * Atomic budget enforcement: checks AND increments in a single SQL statement
+ * to prevent TOCTOU race conditions in concurrent requests.
+ */
+export async function enforceBudget(estimatedCost: number): Promise<void> {
+  const date = today();
+  const daily = await getOrCreateDailyCost();
+
+  // Atomic check: only update if the new total would be within budget
+  const result = await db
+    .update(dailyCosts)
+    .set({
+      totalCost: sql`${dailyCosts.totalCost} + ${estimatedCost}`,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(
+      sql`${dailyCosts.date} = ${date} AND ${dailyCosts.totalCost} + ${estimatedCost} <= ${dailyCosts.maxDailyCost}`,
+    )
+    .returning();
+
+  if (result.length === 0) {
+    throw new BudgetExceededError(daily.totalCost + estimatedCost, daily.maxDailyCost);
   }
 }
+
+// Keep old name as alias for backwards compatibility
+export const enforcebudget = enforceBudget;
 
 export async function checkListingLimit(): Promise<{ remaining: number; used: number; max: number }> {
   const daily = await getOrCreateDailyCost();
@@ -46,10 +67,26 @@ export async function checkListingLimit(): Promise<{ remaining: number; used: nu
   };
 }
 
+/**
+ * Atomic listing limit enforcement: checks AND increments in one SQL statement.
+ */
 export async function enforceListingLimit(): Promise<void> {
-  const limit = await checkListingLimit();
-  if (limit.remaining <= 0) {
-    throw new ListingLimitError(limit.used, limit.max);
+  const date = today();
+  const daily = await getOrCreateDailyCost();
+
+  const result = await db
+    .update(dailyCosts)
+    .set({
+      listingsCreated: sql`${dailyCosts.listingsCreated} + 1`,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(
+      sql`${dailyCosts.date} = ${date} AND ${dailyCosts.listingsCreated} < ${dailyCosts.maxDailyListings}`,
+    )
+    .returning();
+
+  if (result.length === 0) {
+    throw new ListingLimitError(daily.listingsCreated, daily.maxDailyListings);
   }
 }
 
@@ -59,7 +96,7 @@ export async function recordCost(
   options?: { modelName?: string; description?: string; referenceId?: string; referenceType?: string },
 ): Promise<void> {
   const date = today();
-  const daily = await getOrCreateDailyCost();
+  await getOrCreateDailyCost();
 
   // Record the line item
   await db.insert(costEntries).values({
@@ -72,7 +109,7 @@ export async function recordCost(
     referenceType: options?.referenceType,
   });
 
-  // Update daily totals
+  // Atomic update of daily totals
   const isAI = category.startsWith("openai");
   const isAPI = category === "printify" || category === "trend_api";
   const isFee = category === "etsy_fee";
@@ -80,22 +117,23 @@ export async function recordCost(
   await db
     .update(dailyCosts)
     .set({
-      totalCost: daily.totalCost + amount,
-      aiCost: daily.aiCost + (isAI ? amount : 0),
-      apiCost: daily.apiCost + (isAPI ? amount : 0),
-      listingFees: daily.listingFees + (isFee ? amount : 0),
+      totalCost: sql`${dailyCosts.totalCost} + ${amount}`,
+      aiCost: sql`${dailyCosts.aiCost} + ${isAI ? amount : 0}`,
+      apiCost: sql`${dailyCosts.apiCost} + ${isAPI ? amount : 0}`,
+      listingFees: sql`${dailyCosts.listingFees} + ${isFee ? amount : 0}`,
       updatedAt: new Date().toISOString(),
     })
-    .where(eq(dailyCosts.id, daily.id));
+    .where(eq(dailyCosts.date, date));
 }
 
 export async function incrementListingCount(): Promise<void> {
-  const daily = await getOrCreateDailyCost();
+  const date = today();
+  await getOrCreateDailyCost();
   await db
     .update(dailyCosts)
     .set({
-      listingsCreated: daily.listingsCreated + 1,
+      listingsCreated: sql`${dailyCosts.listingsCreated} + 1`,
       updatedAt: new Date().toISOString(),
     })
-    .where(eq(dailyCosts.id, daily.id));
+    .where(eq(dailyCosts.date, date));
 }

@@ -16,8 +16,11 @@ export async function GET() {
     return NextResponse.json({ success: true, date: today });
   } catch (error) {
     log("error", "Analytics sync failed", { error: error instanceof Error ? error.message : String(error) });
+    const message = process.env.NODE_ENV === "production"
+      ? "Internal server error"
+      : error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
+      { error: message },
       { status: 500 },
     );
   }

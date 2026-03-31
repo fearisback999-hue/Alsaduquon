@@ -1,20 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { approvalQueueEntries, etsyListings } from "@/lib/db/schema";
-import { eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { runPipeline } from "@/lib/pipeline/engine";
 import { findResumableRun } from "@/lib/pipeline/concurrency";
+import { z } from "zod";
 
 export const dynamic = "force-dynamic";
 
-export async function POST(request: NextRequest) {
-  const { approvals } = await request.json();
-  // Expected: [{ id: string, action: "approved" | "rejected", feedback?: string }]
+const approvalItemSchema = z.object({
+  id: z.string().uuid(),
+  action: z.enum(["approved", "rejected"]),
+  feedback: z.string().max(500).optional(),
+});
 
-  if (!Array.isArray(approvals) || approvals.length === 0) {
-    return NextResponse.json({ error: "No approvals provided" }, { status: 400 });
+const batchApprovalSchema = z.object({
+  approvals: z.array(approvalItemSchema).min(1).max(50),
+});
+
+export async function POST(request: NextRequest) {
+  const body = await request.json().catch(() => null);
+  const parsed = batchApprovalSchema.safeParse(body);
+
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid request", details: parsed.error.issues.map((i) => i.message) },
+      { status: 400 },
+    );
   }
 
+  const { approvals } = parsed.data;
   let approved = 0;
   let rejected = 0;
 

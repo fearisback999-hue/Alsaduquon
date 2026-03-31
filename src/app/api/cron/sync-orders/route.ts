@@ -54,7 +54,7 @@ export async function GET() {
         await db.insert(orders).values({
           etsyListingId: listing.id,
           etsyOrderId: String(receipt.receipt_id),
-          status: receipt.status === "paid" ? "processing" : receipt.status as any,
+          status: receipt.status === "paid" ? "processing" as const : "new" as const,
           quantity: transaction.quantity,
           revenue: profitCalc.revenue,
           cost: profitCalc.printifyCost,
@@ -70,8 +70,11 @@ export async function GET() {
     return NextResponse.json({ synced, skipped, total: receipts.count });
   } catch (error) {
     log("error", "Order sync failed", { error: error instanceof Error ? error.message : String(error) });
+    const message = process.env.NODE_ENV === "production"
+      ? "Internal server error"
+      : error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
+      { error: message },
       { status: 500 },
     );
   }

@@ -24,8 +24,11 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error) {
+    const message = process.env.NODE_ENV === "production"
+      ? "Internal server error"
+      : error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(
-      { status: "error", message: error instanceof Error ? error.message : "Unknown error" },
+      { status: "error", message },
       { status: 500 },
     );
   }

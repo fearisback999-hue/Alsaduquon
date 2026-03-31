@@ -38,7 +38,8 @@ export function checkEtsyPolicy(text: string): { passed: boolean; violations: st
   const violations: string[] = [];
 
   for (const term of ETSY_BANNED_TERMS) {
-    if (lower.includes(term)) {
+    const regex = new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+    if (regex.test(lower)) {
       violations.push(`Contains potentially trademarked term: "${term}"`);
     }
   }

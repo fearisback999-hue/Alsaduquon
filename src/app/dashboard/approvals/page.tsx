@@ -110,7 +110,7 @@ export default function ApprovalsPage() {
 
                   {entry.listing?.tags && (
                     <div className="flex flex-wrap gap-1 mb-2">
-                      {JSON.parse(entry.listing.tags).slice(0, 8).map((tag: string, i: number) => (
+                      {(() => { try { return JSON.parse(entry.listing.tags); } catch { return []; } })().slice(0, 8).map((tag: string, i: number) => (
                         <span key={i} className="px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">{tag}</span>
                       ))}
                     </div>
@@ -127,6 +127,7 @@ export default function ApprovalsPage() {
                   <input
                     type="text"
                     placeholder="Feedback (optional)"
+                    maxLength={500}
                     value={feedback[entry.id] ?? ""}
                     onChange={(e) => setFeedback({ ...feedback, [entry.id]: e.target.value })}
                     className="mt-2 w-full px-3 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"

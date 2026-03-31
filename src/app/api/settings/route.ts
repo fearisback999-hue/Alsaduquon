@@ -2,8 +2,23 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { settings } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { z } from "zod";
 
 export const dynamic = "force-dynamic";
+
+const ALLOWED_SETTINGS_KEYS = [
+  "niche_score_threshold", "concepts_per_niche", "max_image_attempts",
+  "mockups_per_product", "approval_batch_size", "approval_mode",
+  "base_price", "margin_percent", "max_title_length", "max_tags",
+  "max_daily_cost", "max_daily_listings",
+  "dalle_model", "dalle_quality", "gpt_model",
+  "enabled_product_types", "default_colors",
+] as const;
+
+const updateSettingSchema = z.object({
+  key: z.enum(ALLOWED_SETTINGS_KEYS),
+  value: z.string().max(1000),
+});
 
 export async function GET() {
   const allSettings = await db.select().from(settings).all();
@@ -11,23 +26,29 @@ export async function GET() {
 }
 
 export async function PUT(request: NextRequest) {
-  const { key, value } = await request.json();
+  const body = await request.json().catch(() => null);
+  const parsed = updateSettingSchema.safeParse(body);
 
-  if (!key || value === undefined) {
-    return NextResponse.json({ error: "key and value required" }, { status: 400 });
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid request", details: parsed.error.issues.map((i) => i.message) },
+      { status: 400 },
+    );
   }
+
+  const { key, value } = parsed.data;
 
   const existing = await db.select().from(settings).where(eq(settings.key, key)).get();
 
   if (existing) {
     await db.update(settings).set({
-      value: String(value),
+      value,
       updatedAt: new Date().toISOString(),
     }).where(eq(settings.key, key));
   } else {
     await db.insert(settings).values({
       key,
-      value: String(value),
+      value,
       updatedAt: new Date().toISOString(),
     });
   }

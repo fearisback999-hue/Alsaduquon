@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  const days = parseInt(searchParams.get("days") ?? "30");
+  const days = Math.min(Math.max(parseInt(searchParams.get("days") ?? "30") || 30, 1), 365);
 
   const daily = await db
     .select()
