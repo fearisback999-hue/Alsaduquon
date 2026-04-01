@@ -1,10 +1,21 @@
 import type { PipelineContext, StepResult } from "../context";
-import { generatedImages, designConcepts, niches, printifyProducts } from "@/lib/db/schema";
+import { generatedImages, designConcepts, niches, printifyProducts, settings } from "@/lib/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import * as printify from "@/lib/external/printify";
-import { getProductConfig, PRODUCT_CONFIGS } from "@/lib/printify/product-config";
+import { getProductConfig, getProductDisplayName, ALL_PRODUCT_TYPES } from "@/lib/printify/product-config";
 import { calculateRetailPrice } from "@/lib/etsy/pricing";
-import type { ProductType } from "@/lib/types";
+
+async function getEnabledProductTypes(db: PipelineContext["db"]): Promise<string[]> {
+  const setting = await db.select().from(settings).where(eq(settings.key, "enabled_product_types")).get();
+  if (setting) {
+    try {
+      const parsed = JSON.parse(setting.value);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    } catch { /* fall through to default */ }
+  }
+  // Default: top 5 best sellers
+  return ["unisex_tshirt", "hoodie", "mug_11oz", "poster", "tote_bag"];
+}
 
 export default async function execute(context: PipelineContext): Promise<StepResult> {
   if (context.dryRun) {
@@ -21,7 +32,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   }
 
   const shopId = process.env.PRINTIFY_SHOP_ID!;
-  const productTypes: ProductType[] = ["premium_tshirt", "hoodie", "blanket"];
+  const enabledTypes = await getEnabledProductTypes(context.db);
   let created = 0;
   let failed = 0;
 
@@ -39,14 +50,17 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
       const uploaded = await printify.uploadImage(`${image.id}.png`, base64);
       printifyImageId = uploaded.id;
-    } catch (error) {
+    } catch {
       failed++;
       continue;
     }
 
-    // Create each product type
-    for (const productType of productTypes) {
-      // Idempotency: check if product already exists
+    // Create each enabled product type
+    for (const productType of enabledTypes) {
+      const config = getProductConfig(productType);
+      if (!config) continue;
+
+      // Idempotency: check if product already exists for this image + type
       const existing = await context.db
         .select()
         .from(printifyProducts)
@@ -54,8 +68,6 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         .all();
 
       if (existing.some((p) => p.productType === productType)) continue;
-
-      const config = getProductConfig(productType);
 
       try {
         // Get available variants for this blueprint
@@ -66,7 +78,8 @@ export default async function execute(context: PipelineContext): Promise<StepRes
           is_enabled: true,
         }));
 
-        const title = `${concept?.title ?? "Design"} ${productType === "premium_tshirt" ? "T-Shirt" : productType === "hoodie" ? "Hoodie" : "Blanket"} | ${niche?.name ?? ""}`.trim();
+        const displayName = getProductDisplayName(productType);
+        const title = `${concept?.title ?? "Design"} ${displayName} | ${niche?.name ?? ""}`.trim();
 
         const product = await printify.createProduct(shopId, {
           title,
@@ -109,7 +122,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
         context.createdProductIds.push(dbProduct.id);
         created++;
-      } catch (error) {
+      } catch {
         failed++;
         // Record failed product attempt
         await context.db.insert(printifyProducts).values({
@@ -126,7 +139,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
   return {
     status: "completed",
-    message: `Created ${created} Printify products, ${failed} failed`,
-    data: { created, failed, images: images.length },
+    message: `Created ${created} products across ${enabledTypes.length} types, ${failed} failed`,
+    data: { created, failed, images: images.length, productTypes: enabledTypes.length },
   };
 }

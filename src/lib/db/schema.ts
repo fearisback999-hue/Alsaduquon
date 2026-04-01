@@ -154,7 +154,7 @@ export const printifyProducts = sqliteTable("printify_products", {
   generatedImageId: text("generated_image_id").notNull().references(() => generatedImages.id),
   printifyProductId: text("printify_product_id"), // External Printify ID
   printifyShopId: text("printify_shop_id"),
-  productType: text("product_type", { enum: ["premium_tshirt", "hoodie", "blanket"] }).notNull(),
+  productType: text("product_type").notNull(),
   blueprintId: integer("blueprint_id"),
   printProviderId: integer("print_provider_id"),
   title: text("title").notNull(),

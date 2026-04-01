@@ -27,9 +27,8 @@ const DEFAULT_SETTINGS = [
   { key: "dalle_quality", value: "hd", type: "string" as const, group: "api" as const, description: "DALL-E image quality: hd or standard" },
   { key: "gpt_model", value: "gpt-4.1", type: "string" as const, group: "api" as const, description: "GPT model for text generation" },
 
-  // Product types
-  { key: "enabled_product_types", value: '["premium_tshirt","hoodie","blanket"]', type: "json" as const, group: "pipeline" as const, description: "Product types to create per design" },
-  { key: "default_colors", value: '["black","navy","white","grey"]', type: "json" as const, group: "pipeline" as const, description: "Default color variants" },
+  // Product types — all 16 available, top 5 enabled by default
+  { key: "enabled_product_types", value: '["unisex_tshirt","hoodie","mug_11oz","poster","tote_bag"]', type: "json" as const, group: "pipeline" as const, description: "Product types to create per design (from: unisex_tshirt, hoodie, crewneck_sweatshirt, tank_top, long_sleeve_tee, vneck_tshirt, mug_11oz, mug_15oz, tote_bag, poster, canvas_print, phone_case, sticker, mousepad, blanket, throw_pillow)" },
 ];
 
 async function seed() {

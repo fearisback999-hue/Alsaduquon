@@ -12,7 +12,7 @@ const ALLOWED_SETTINGS_KEYS = [
   "base_price", "margin_percent", "max_title_length", "max_tags",
   "max_daily_cost", "max_daily_listings",
   "dalle_model", "dalle_quality", "gpt_model",
-  "enabled_product_types", "default_colors",
+  "enabled_product_types",
 ] as const;
 
 const updateSettingSchema = z.object({

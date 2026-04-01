@@ -3,6 +3,7 @@ import { printifyProducts, mockups, etsyListings, designConcepts, niches } from 
 import { eq, inArray } from "drizzle-orm";
 import * as etsy from "@/lib/external/etsy";
 import { generateListingTitle, generateListingDescription, generateListingTags, calculateSEOScore } from "@/lib/etsy/seo";
+import { getProductDisplayName } from "@/lib/printify/product-config";
 import { calculateRetailPrice } from "@/lib/etsy/pricing";
 import { fullModeration } from "@/lib/ai/moderation";
 import { enforcebudget } from "@/lib/cost/guard";
@@ -32,8 +33,8 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   let moderationRejects = 0;
 
   for (const [conceptId, conceptProducts] of Array.from(byConceptId.entries())) {
-    // Pick the t-shirt variant as the primary listing product
-    const primaryProduct = conceptProducts.find((p) => p.productType === "premium_tshirt") ?? conceptProducts[0];
+    // Pick the first product as the primary listing product (ordered by creation)
+    const primaryProduct = conceptProducts.find((p) => p.productType === "unisex_tshirt") ?? conceptProducts[0];
 
     // Idempotency: check if listing already exists
     const existingListing = await context.db
@@ -52,9 +53,10 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     await enforcebudget(0.05); // Estimated cost for SEO generation
 
     // Generate SEO-optimized listing content
-    const title = await generateListingTitle(niche.name, concept.title, "t-shirt", 140, context.pipelineRunId);
-    const description = await generateListingDescription(niche.name, concept.title, concept.description ?? "", "t-shirt", context.pipelineRunId);
-    const tags = await generateListingTags(niche.name, concept.title, "t-shirt", 13, context.pipelineRunId);
+    const productDisplayName = getProductDisplayName(primaryProduct.productType);
+    const title = await generateListingTitle(niche.name, concept.title, productDisplayName, 140, context.pipelineRunId);
+    const description = await generateListingDescription(niche.name, concept.title, concept.description ?? "", productDisplayName, context.pipelineRunId);
+    const tags = await generateListingTags(niche.name, concept.title, productDisplayName, 13, context.pipelineRunId);
 
     // MODERATION CHECK on listing text (second gate — after concept moderation in step 3)
     const modResult = await fullModeration(`${title} ${description} ${tags.join(" ")}`);
