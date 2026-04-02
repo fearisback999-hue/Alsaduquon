@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { etsyListings, orders, dailyCosts, pipelineRuns } from "@/lib/db/schema";
+import { etsyListings, orders, dailyCosts, pipelineRuns, settings } from "@/lib/db/schema";
 import { eq, desc, sql } from "drizzle-orm";
 import { StatCard } from "@/components/ui/stat-card";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -9,22 +9,29 @@ export const dynamic = "force-dynamic";
 export default async function DashboardPage() {
   const today = new Date().toISOString().split("T")[0];
 
-  const [liveListings, totalOrders, todayCost, latestRun, revenueResult] = await Promise.all([
+  const [liveListings, totalOrders, todayCost, latestRun, revenueResult, enabledProductsSetting] = await Promise.all([
     db.select({ count: sql<number>`count(*)` }).from(etsyListings).where(eq(etsyListings.status, "published")).get(),
     db.select({ count: sql<number>`count(*)` }).from(orders).get(),
     db.select().from(dailyCosts).where(eq(dailyCosts.date, today)).get(),
     db.select().from(pipelineRuns).orderBy(desc(pipelineRuns.createdAt)).limit(1).get(),
     db.select({ sum: sql<number>`coalesce(sum(revenue), 0)` }).from(orders).get(),
+    db.select().from(settings).where(eq(settings.key, "enabled_product_types")).get(),
   ]);
+
+  let enabledProductCount = 0;
+  if (enabledProductsSetting) {
+    try { enabledProductCount = JSON.parse(enabledProductsSetting.value).length; } catch { /* ignore */ }
+  }
 
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-6">Dashboard</h1>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
         <StatCard label="Live Listings" value={liveListings?.count ?? 0} detail="Target: 500" color="blue" />
         <StatCard label="Total Orders" value={totalOrders?.count ?? 0} color="green" />
         <StatCard label="Total Revenue" value={`$${(revenueResult?.sum ?? 0).toFixed(2)}`} color="green" />
+        <StatCard label="Product Types" value={enabledProductCount} detail="of 16 enabled" color="blue" />
         <StatCard
           label="Today's Cost"
           value={`$${(todayCost?.totalCost ?? 0).toFixed(2)}`}

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { getProductDisplayName } from "@/lib/printify/product-config";
 
 interface Listing {
   id: string;
@@ -12,6 +13,7 @@ interface Listing {
   seoScore: number | null;
   publishedAt: string | null;
   createdAt: string;
+  productType: string | null;
 }
 
 export default function ListingsPage() {
@@ -56,6 +58,7 @@ export default function ListingsPage() {
           <thead className="bg-gray-50 border-b">
             <tr>
               <th className="text-left px-4 py-3 font-medium text-gray-500">Title</th>
+              <th className="text-left px-4 py-3 font-medium text-gray-500">Product</th>
               <th className="text-left px-4 py-3 font-medium text-gray-500">Status</th>
               <th className="text-left px-4 py-3 font-medium text-gray-500">Price</th>
               <th className="text-left px-4 py-3 font-medium text-gray-500">SEO</th>
@@ -67,6 +70,7 @@ export default function ListingsPage() {
             {listings.map((listing) => (
               <tr key={listing.id} className="hover:bg-gray-50">
                 <td className="px-4 py-3 font-medium max-w-xs truncate">{listing.title}</td>
+                <td className="px-4 py-3 text-gray-600">{listing.productType ? getProductDisplayName(listing.productType) : "—"}</td>
                 <td className="px-4 py-3"><StatusBadge status={listing.status} /></td>
                 <td className="px-4 py-3">${listing.finalPrice.toFixed(2)}</td>
                 <td className="px-4 py-3 text-gray-500">{listing.seoScore ?? "—"}</td>
@@ -83,7 +87,7 @@ export default function ListingsPage() {
               </tr>
             ))}
             {listings.length === 0 && (
-              <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-500">No listings found</td></tr>
+              <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-500">No listings found</td></tr>
             )}
           </tbody>
         </table>

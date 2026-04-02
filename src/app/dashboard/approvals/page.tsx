@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { getProductDisplayName } from "@/lib/printify/product-config";
 
 interface ApprovalEntry {
   id: string;
@@ -119,7 +120,7 @@ export default function ApprovalsPage() {
                   <div className="flex items-center gap-4 text-sm text-gray-600">
                     <span>${entry.listing?.finalPrice?.toFixed(2) ?? "0.00"}</span>
                     {entry.listing?.seoScore != null && <span>SEO: {entry.listing.seoScore}/100</span>}
-                    <span>{entry.product?.productType ?? ""}</span>
+                    <span>{entry.product?.productType ? getProductDisplayName(entry.product.productType) : ""}</span>
                     <span>Batch #{entry.batchNumber}</span>
                   </div>
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { etsyListings } from "@/lib/db/schema";
+import { etsyListings, printifyProducts } from "@/lib/db/schema";
 import { eq, desc, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
@@ -22,14 +22,25 @@ export async function GET(request: NextRequest) {
     ? eq(etsyListings.status, status as typeof VALID_STATUSES[number])
     : sql`1=1`;
 
-  const listings = await db
-    .select()
+  const rows = await db
+    .select({
+      id: etsyListings.id,
+      title: etsyListings.title,
+      status: etsyListings.status,
+      finalPrice: etsyListings.finalPrice,
+      etsyUrl: etsyListings.etsyUrl,
+      seoScore: etsyListings.seoScore,
+      publishedAt: etsyListings.publishedAt,
+      createdAt: etsyListings.createdAt,
+      productType: printifyProducts.productType,
+    })
     .from(etsyListings)
+    .leftJoin(printifyProducts, eq(etsyListings.printifyProductId, printifyProducts.id))
     .where(condition)
     .orderBy(desc(etsyListings.createdAt))
     .limit(limit)
     .offset(offset)
     .all();
 
-  return NextResponse.json({ listings });
+  return NextResponse.json({ listings: rows });
 }

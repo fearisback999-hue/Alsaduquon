@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { PRODUCT_CONFIGS, ALL_PRODUCT_TYPES } from "@/lib/printify/product-config";
 
 interface Setting {
   id: string;
@@ -13,11 +14,35 @@ interface Setting {
 
 const GROUPS = ["pipeline", "pricing", "limits", "api", "general"];
 
+const CATEGORIES: Record<string, string> = {
+  apparel: "Apparel",
+  drinkware: "Drinkware",
+  bags: "Bags",
+  wall_art: "Wall Art",
+  accessories: "Accessories",
+  home: "Home",
+};
+
+const CATEGORY_ORDER = ["apparel", "drinkware", "bags", "wall_art", "accessories", "home"];
+
+function getProductsByCategory(): Record<string, Array<{ key: string; displayName: string }>> {
+  const grouped: Record<string, Array<{ key: string; displayName: string }>> = {};
+  for (const [key, config] of Object.entries(PRODUCT_CONFIGS)) {
+    if (!grouped[config.category]) grouped[config.category] = [];
+    grouped[config.category].push({ key, displayName: config.displayName });
+  }
+  return grouped;
+}
+
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Setting[]>([]);
   const [editValues, setEditValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [enabledProducts, setEnabledProducts] = useState<Set<string>>(new Set());
+  const [savingProducts, setSavingProducts] = useState(false);
+
+  const productsByCategory = getProductsByCategory();
 
   async function loadData() {
     setLoading(true);
@@ -26,7 +51,15 @@ export default function SettingsPage() {
       const data = await res.json();
       setSettings(data.settings ?? []);
       const values: Record<string, string> = {};
-      for (const s of data.settings ?? []) values[s.key] = s.value;
+      for (const s of data.settings ?? []) {
+        values[s.key] = s.value;
+        if (s.key === "enabled_product_types") {
+          try {
+            const arr = JSON.parse(s.value);
+            if (Array.isArray(arr)) setEnabledProducts(new Set(arr));
+          } catch { /* ignore */ }
+        }
+      }
       setEditValues(values);
     }
     setLoading(false);
@@ -45,14 +78,128 @@ export default function SettingsPage() {
     loadData();
   }
 
+  async function saveEnabledProducts(newSet: Set<string>) {
+    setEnabledProducts(newSet);
+    setSavingProducts(true);
+    const arr = Array.from(newSet);
+    await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: "enabled_product_types", value: JSON.stringify(arr) }),
+    });
+    setSavingProducts(false);
+  }
+
+  function toggleProduct(key: string) {
+    const newSet = new Set(enabledProducts);
+    if (newSet.has(key)) {
+      newSet.delete(key);
+    } else {
+      newSet.add(key);
+    }
+    saveEnabledProducts(newSet);
+  }
+
+  function toggleCategory(category: string, enable: boolean) {
+    const newSet = new Set(enabledProducts);
+    const products = productsByCategory[category] ?? [];
+    for (const p of products) {
+      if (enable) newSet.add(p.key);
+      else newSet.delete(p.key);
+    }
+    saveEnabledProducts(newSet);
+  }
+
   if (loading) return <div className="text-center text-gray-500 py-8">Loading settings...</div>;
 
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-6">Settings</h1>
 
+      {/* Product Types Selector */}
+      <div className="bg-white rounded-lg border mb-6">
+        <div className="p-4 border-b flex items-center justify-between">
+          <div>
+            <h2 className="font-medium text-sm text-gray-500 uppercase tracking-wide">Product Types</h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {enabledProducts.size} of {ALL_PRODUCT_TYPES.length} products enabled
+              {savingProducts && <span className="ml-2 text-blue-500">Saving...</span>}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => saveEnabledProducts(new Set(ALL_PRODUCT_TYPES))}
+              className="px-3 py-1.5 text-xs bg-blue-50 text-blue-600 rounded hover:bg-blue-100"
+            >
+              Enable All
+            </button>
+            <button
+              onClick={() => saveEnabledProducts(new Set())}
+              className="px-3 py-1.5 text-xs bg-gray-50 text-gray-600 rounded hover:bg-gray-100"
+            >
+              Disable All
+            </button>
+          </div>
+        </div>
+
+        <div className="p-4 space-y-6">
+          {CATEGORY_ORDER.map((category) => {
+            const products = productsByCategory[category];
+            if (!products) return null;
+            const allEnabled = products.every((p) => enabledProducts.has(p.key));
+            const someEnabled = products.some((p) => enabledProducts.has(p.key));
+            const enabledCount = products.filter((p) => enabledProducts.has(p.key)).length;
+
+            return (
+              <div key={category}>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-medium text-gray-700">{CATEGORIES[category]}</h3>
+                    <span className="text-xs text-gray-400">{enabledCount}/{products.length}</span>
+                  </div>
+                  <button
+                    onClick={() => toggleCategory(category, !allEnabled)}
+                    className="text-xs text-blue-600 hover:text-blue-800"
+                  >
+                    {allEnabled ? "Deselect all" : "Select all"}
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                  {products.map((product) => {
+                    const enabled = enabledProducts.has(product.key);
+                    return (
+                      <button
+                        key={product.key}
+                        onClick={() => toggleProduct(product.key)}
+                        className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-left text-sm transition-colors ${
+                          enabled
+                            ? "bg-blue-50 border-blue-200 text-blue-900"
+                            : "bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100"
+                        }`}
+                      >
+                        <span className={`flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center ${
+                          enabled ? "bg-blue-600 border-blue-600" : "border-gray-300"
+                        }`}>
+                          {enabled && (
+                            <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
+                        </span>
+                        <span className="truncate">{product.displayName}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Other Settings */}
       {GROUPS.map((group) => {
-        const groupSettings = settings.filter((s) => s.group === group);
+        const groupSettings = settings.filter((s) => s.group === group && s.key !== "enabled_product_types");
         if (groupSettings.length === 0) return null;
 
         return (
