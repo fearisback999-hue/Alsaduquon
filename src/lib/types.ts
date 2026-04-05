@@ -58,5 +58,6 @@ export const DALLE_COST_HD = 0.08;
 export const DALLE_COST_STANDARD = 0.04;
 export const GPT41_INPUT_COST_PER_1K = 0.002;
 export const GPT41_OUTPUT_COST_PER_1K = 0.008;
+export const GPT4O_VISION_COST_ESTIMATE = 0.01;
 export const ETSY_LISTING_FEE = 0.20;
 export const ETSY_TRANSACTION_FEE_PERCENT = 6.5;

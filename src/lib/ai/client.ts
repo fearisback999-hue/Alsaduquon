@@ -50,6 +50,49 @@ export async function chatCompletion(
   };
 }
 
+export async function analyzeImage(
+  imageUrl: string,
+  prompt: string,
+  options?: {
+    systemPrompt?: string;
+    model?: string;
+    maxTokens?: number;
+    temperature?: number;
+    jsonMode?: boolean;
+  },
+): Promise<{ content: string; inputTokens: number; outputTokens: number; model: string }> {
+  const openai = getOpenAI();
+  const model = options?.model ?? "gpt-4o";
+
+  const messages: OpenAI.ChatCompletionMessageParam[] = [];
+  if (options?.systemPrompt) {
+    messages.push({ role: "system", content: options.systemPrompt });
+  }
+  messages.push({
+    role: "user",
+    content: [
+      { type: "text", text: prompt },
+      { type: "image_url", image_url: { url: imageUrl, detail: "high" } },
+    ],
+  });
+
+  const response = await openai.chat.completions.create({
+    model,
+    messages,
+    max_tokens: options?.maxTokens ?? 500,
+    temperature: options?.temperature ?? 0.3,
+    ...(options?.jsonMode && { response_format: { type: "json_object" } }),
+  });
+
+  const choice = response.choices[0];
+  return {
+    content: choice.message.content ?? "",
+    inputTokens: response.usage?.prompt_tokens ?? 0,
+    outputTokens: response.usage?.completion_tokens ?? 0,
+    model,
+  };
+}
+
 export async function generateImage(
   prompt: string,
   options?: { model?: string; size?: "1024x1024" | "1792x1024" | "1024x1792"; quality?: "hd" | "standard" },
