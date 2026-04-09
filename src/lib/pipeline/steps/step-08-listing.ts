@@ -4,7 +4,7 @@ import { eq, inArray } from "drizzle-orm";
 import * as etsy from "@/lib/external/etsy";
 import { generateListingTitle, generateListingDescription, generateListingTags, calculateSEOScore } from "@/lib/etsy/seo";
 import { getProductDisplayName } from "@/lib/printify/product-config";
-import { calculateRetailPrice } from "@/lib/etsy/pricing";
+import { calculateDynamicPrice } from "@/lib/pricing/engine";
 import { fullModeration } from "@/lib/ai/moderation";
 import { enforcebudget } from "@/lib/cost/guard";
 import { recordCost } from "@/lib/cost/guard";
@@ -65,7 +65,15 @@ export default async function execute(context: PipelineContext): Promise<StepRes
       continue;
     }
 
-    const retailPrice = calculateRetailPrice(primaryProduct.baseCost ?? 15, 40, 25);
+    const pricing = calculateDynamicPrice({
+      productType: primaryProduct.productType,
+      baseCost: primaryProduct.baseCost ?? 15,
+      nicheCompositeScore: niche.compositeScore ?? undefined,
+      competitionLevel: niche.competitionLevel ?? undefined,
+      trendDirection: niche.trendDirection ?? undefined,
+      marginPercent: 40,
+    });
+    const retailPrice = pricing.retailPrice;
     const seoScore = calculateSEOScore(title, description, tags);
 
     try {

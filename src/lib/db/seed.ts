@@ -21,11 +21,16 @@ const DEFAULT_SETTINGS = [
   // Limits
   { key: "max_daily_cost", value: "10.00", type: "number" as const, group: "limits" as const, description: "Maximum daily spend in USD" },
   { key: "max_daily_listings", value: "5", type: "number" as const, group: "limits" as const, description: "Maximum listings published per day" },
+  { key: "max_products_per_design", value: "3", type: "number" as const, group: "limits" as const, description: "Max Printify products created per design concept" },
+  { key: "pipeline_runs_per_day", value: "1", type: "number" as const, group: "limits" as const, description: "Pipeline runs per day (1 or 2). Second run at 2 PM UTC." },
 
   // API
   { key: "dalle_model", value: "dall-e-3", type: "string" as const, group: "api" as const, description: "DALL-E model to use for image generation" },
   { key: "dalle_quality", value: "hd", type: "string" as const, group: "api" as const, description: "DALL-E image quality: hd or standard" },
   { key: "gpt_model", value: "gpt-4.1", type: "string" as const, group: "api" as const, description: "GPT model for text generation" },
+
+  // Seasonal
+  { key: "seasonal_boost_enabled", value: "true", type: "boolean" as const, group: "pipeline" as const, description: "Boost seasonal niches during holiday prep windows" },
 
   // Product types — all 16 available, top 5 enabled by default
   { key: "enabled_product_types", value: '["unisex_tshirt","hoodie","mug_11oz","poster","tote_bag"]', type: "json" as const, group: "pipeline" as const, description: "Product types to create per design (from: unisex_tshirt, hoodie, crewneck_sweatshirt, tank_top, long_sleeve_tee, vneck_tshirt, mug_11oz, mug_15oz, tote_bag, poster, canvas_print, phone_case, sticker, mousepad, blanket, throw_pillow)" },

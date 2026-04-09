@@ -10,9 +10,10 @@ const ALLOWED_SETTINGS_KEYS = [
   "niche_score_threshold", "concepts_per_niche", "max_image_attempts",
   "mockups_per_product", "approval_batch_size", "approval_mode",
   "base_price", "margin_percent", "max_title_length", "max_tags",
-  "max_daily_cost", "max_daily_listings",
+  "max_daily_cost", "max_daily_listings", "max_products_per_design", "pipeline_runs_per_day",
   "dalle_model", "dalle_quality", "gpt_model",
   "enabled_product_types",
+  "seasonal_boost_enabled",
 ] as const;
 
 const updateSettingSchema = z.object({

@@ -197,9 +197,78 @@ export default function SettingsPage() {
         </div>
       </div>
 
+      {/* Throughput & Budget Controls */}
+      <div className="bg-white rounded-lg border mb-6">
+        <div className="p-4 border-b">
+          <h2 className="font-medium text-sm text-gray-500 uppercase tracking-wide">Throughput & Budget</h2>
+          <p className="text-xs text-gray-400 mt-0.5">Control how fast and how much the pipeline spends</p>
+        </div>
+        <div className="divide-y">
+          {[
+            { key: "max_daily_listings", label: "Max Daily Listings", desc: "Maximum listings published per day", suffix: "listings/day" },
+            { key: "max_daily_cost", label: "Daily Budget", desc: "Maximum daily AI/API spend", suffix: "USD/day", prefix: "$" },
+            { key: "concepts_per_niche", label: "Concepts per Niche", desc: "Design concepts generated per approved niche", suffix: "concepts" },
+            { key: "max_products_per_design", label: "Products per Design", desc: "Printify products created per design (controls cost per concept)", suffix: "products" },
+            { key: "pipeline_runs_per_day", label: "Pipeline Runs per Day", desc: "1 = morning only (6 AM UTC), 2 = morning + afternoon (6 AM + 2 PM UTC)", suffix: "runs" },
+          ].map((control) => (
+            <div key={control.key} className="p-4 flex items-center gap-4">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-900">{control.label}</p>
+                <p className="text-xs text-gray-500 mt-0.5">{control.desc}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {control.prefix && <span className="text-sm text-gray-500">{control.prefix}</span>}
+                <input
+                  type="number"
+                  min="1"
+                  step={control.key === "max_daily_cost" ? "0.50" : "1"}
+                  value={editValues[control.key] ?? ""}
+                  onChange={(e) => setEditValues({ ...editValues, [control.key]: e.target.value })}
+                  className="w-24 px-3 py-1.5 border border-gray-300 rounded text-sm text-right focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <span className="text-xs text-gray-400 w-20">{control.suffix}</span>
+                <button
+                  onClick={() => saveSetting(control.key)}
+                  disabled={saving === control.key || editValues[control.key] === settings.find((s) => s.key === control.key)?.value}
+                  className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {saving === control.key ? "..." : "Save"}
+                </button>
+              </div>
+            </div>
+          ))}
+          {/* Seasonal Boost Toggle */}
+          <div className="p-4 flex items-center gap-4">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-gray-900">Seasonal Boost</p>
+              <p className="text-xs text-gray-500 mt-0.5">Boost seasonal niches during holiday prep windows (Valentine&apos;s, Halloween, Christmas, etc.)</p>
+            </div>
+            <button
+              onClick={() => {
+                const newVal = editValues["seasonal_boost_enabled"] === "false" ? "true" : "false";
+                setEditValues({ ...editValues, seasonal_boost_enabled: newVal });
+                fetch("/api/settings", {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ key: "seasonal_boost_enabled", value: newVal }),
+                }).then(() => loadData());
+              }}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                editValues["seasonal_boost_enabled"] !== "false" ? "bg-blue-600" : "bg-gray-300"
+              }`}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                editValues["seasonal_boost_enabled"] !== "false" ? "translate-x-6" : "translate-x-1"
+              }`} />
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Other Settings */}
       {GROUPS.map((group) => {
-        const groupSettings = settings.filter((s) => s.group === group && s.key !== "enabled_product_types");
+        const THROUGHPUT_KEYS = new Set(["max_daily_listings", "max_daily_cost", "concepts_per_niche", "max_products_per_design", "pipeline_runs_per_day", "seasonal_boost_enabled"]);
+        const groupSettings = settings.filter((s) => s.group === group && s.key !== "enabled_product_types" && !THROUGHPUT_KEYS.has(s.key));
         if (groupSettings.length === 0) return null;
 
         return (

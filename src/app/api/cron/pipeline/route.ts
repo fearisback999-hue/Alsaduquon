@@ -1,12 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runPipeline } from "@/lib/pipeline/engine";
 import { acquireLock, findResumableRun } from "@/lib/pipeline/concurrency";
+import { db } from "@/lib/db";
+import { settings } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // 5 minutes (Vercel Pro)
 
 export async function GET(request: NextRequest) {
   // Auth is handled by middleware (CRON_SECRET)
+
+  // Check if this is the second daily run (2 PM UTC) and if user wants it
+  const currentHour = new Date().getUTCHours();
+  if (currentHour >= 12) {
+    // This is the afternoon run — check pipeline_runs_per_day setting
+    const runsSetting = await db.select().from(settings).where(eq(settings.key, "pipeline_runs_per_day")).get();
+    const runsPerDay = parseInt(runsSetting?.value ?? "1") || 1;
+    if (runsPerDay < 2) {
+      return NextResponse.json({ status: "skipped", reason: "Second daily run disabled (pipeline_runs_per_day=1)" });
+    }
+  }
 
   // Check for concurrent runs
   const lock = await acquireLock();

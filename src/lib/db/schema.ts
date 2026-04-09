@@ -374,6 +374,23 @@ export const dailyAnalytics = sqliteTable("daily_analytics", {
 }));
 
 // ============================================================
+// LISTING PERFORMANCE METRICS
+// ============================================================
+
+export const listingMetrics = sqliteTable("listing_metrics", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  etsyListingId: text("etsy_listing_id").notNull().references(() => etsyListings.id, { onDelete: "cascade" }),
+  views: integer("views").notNull().default(0),
+  favorites: integer("favorites").notNull().default(0),
+  sales: integer("sales").notNull().default(0),
+  conversionRate: real("conversion_rate"), // sales / views
+  revenue: real("revenue").default(0),
+  syncedAt: text("synced_at").notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => ({
+  listingIdx: uniqueIndex("listing_metrics_listing_idx").on(table.etsyListingId),
+}));
+
+// ============================================================
 // SETTINGS (key-value config)
 // ============================================================
 
@@ -439,6 +456,11 @@ export const etsyListingsRelations = relations(etsyListings, ({ one, many }) => 
   product: one(printifyProducts, { fields: [etsyListings.printifyProductId], references: [printifyProducts.id] }),
   approvalEntry: one(approvalQueueEntries),
   orders: many(orders),
+  metrics: one(listingMetrics),
+}));
+
+export const listingMetricsRelations = relations(listingMetrics, ({ one }) => ({
+  etsyListing: one(etsyListings, { fields: [listingMetrics.etsyListingId], references: [etsyListings.id] }),
 }));
 
 export const approvalQueueEntriesRelations = relations(approvalQueueEntries, ({ one }) => ({

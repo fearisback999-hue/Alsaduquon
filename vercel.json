@@ -5,12 +5,20 @@
       "schedule": "0 6 * * *"
     },
     {
+      "path": "/api/cron/pipeline",
+      "schedule": "0 14 * * *"
+    },
+    {
       "path": "/api/cron/sync-orders",
       "schedule": "0 */4 * * *"
     },
     {
       "path": "/api/cron/sync-analytics",
       "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/optimize",
+      "schedule": "0 3 * * 1"
     }
   ]
 }

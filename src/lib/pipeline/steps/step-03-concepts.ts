@@ -6,6 +6,7 @@ import { trackTextUsage } from "@/lib/ai/token-tracker";
 import { fullModeration } from "@/lib/ai/moderation";
 import { enforcebudget } from "@/lib/cost/guard";
 import { formatSalesContextForConcepts } from "@/lib/pipeline/sales-feedback";
+import { formatSeasonalContext } from "@/lib/pipeline/seasonal-calendar";
 
 const SYSTEM_PROMPT = `You are a creative director for a successful Etsy print-on-demand brand. You understand that different products require different design approaches — a mug design should be different from a t-shirt design. You create commercially viable designs across diverse artistic styles. Your designs sell because they match current market trends and target specific buyer personas. Avoid copyrighted characters, trademarked phrases, and political content.`;
 
@@ -40,12 +41,13 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
     // Get sales feedback for this niche
     const salesContext = await formatSalesContextForConcepts(niche.name);
+    const seasonalContext = formatSeasonalContext();
 
     const prompt = `Generate 5 print-on-demand design concepts for the niche: "${niche.name}"
 
 ${salesContext}
 
-${PRODUCT_TYPE_CONTEXT}
+${seasonalContext ? seasonalContext + "\n\n" : ""}${PRODUCT_TYPE_CONTEXT}
 
 DIVERSITY REQUIREMENTS (MANDATORY):
 - You MUST include at least 2 different design_type values from: "typography", "illustration", "hybrid", "pattern"

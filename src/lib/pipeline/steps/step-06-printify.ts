@@ -3,7 +3,7 @@ import { generatedImages, designConcepts, niches, printifyProducts, settings } f
 import { eq, inArray } from "drizzle-orm";
 import * as printify from "@/lib/external/printify";
 import { getProductConfig, getProductDisplayName, ALL_PRODUCT_TYPES } from "@/lib/printify/product-config";
-import { calculateRetailPrice } from "@/lib/etsy/pricing";
+import { calculateDynamicPrice, getTypicalCost } from "@/lib/pricing/engine";
 
 async function getEnabledProductTypes(db: PipelineContext["db"]): Promise<string[]> {
   const setting = await db.select().from(settings).where(eq(settings.key, "enabled_product_types")).get();
@@ -32,7 +32,13 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   }
 
   const shopId = process.env.PRINTIFY_SHOP_ID!;
-  const enabledTypes = await getEnabledProductTypes(context.db);
+  const allEnabledTypes = await getEnabledProductTypes(context.db);
+
+  // Respect max_products_per_design setting
+  const maxProductsSetting = await context.db.select().from(settings).where(eq(settings.key, "max_products_per_design")).get();
+  const maxProductsPerDesign = Math.max(1, parseInt(maxProductsSetting?.value ?? "3") || 3);
+  const enabledTypes = allEnabledTypes.slice(0, maxProductsPerDesign);
+
   let created = 0;
   let failed = 0;
 
@@ -72,9 +78,19 @@ export default async function execute(context: PipelineContext): Promise<StepRes
       try {
         // Get available variants for this blueprint
         const variantData = await printify.getVariants(config.blueprintId, config.printProviderId);
+        const baseCost = getTypicalCost(productType);
+        const pricing = calculateDynamicPrice({
+          productType,
+          baseCost,
+          nicheCompositeScore: niche?.compositeScore ?? undefined,
+          competitionLevel: niche?.competitionLevel ?? undefined,
+          trendDirection: niche?.trendDirection ?? undefined,
+          marginPercent: 40,
+        });
+
         const variants = variantData.variants.slice(0, 20).map((v) => ({
           id: v.id,
-          price: Math.round(calculateRetailPrice(15, 40, 25) * 100), // Price in cents
+          price: Math.round(pricing.retailPrice * 100), // Price in cents
           is_enabled: true,
         }));
 
@@ -112,8 +128,8 @@ export default async function execute(context: PipelineContext): Promise<StepRes
           printProviderId: config.printProviderId,
           title,
           description: concept?.description,
-          baseCost: 15,
-          retailPrice: calculateRetailPrice(15, 40, 25),
+          baseCost,
+          retailPrice: pricing.retailPrice,
           variants: JSON.stringify(variants),
           status: "created",
           printifyData: JSON.stringify(product),

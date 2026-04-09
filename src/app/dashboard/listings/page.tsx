@@ -14,6 +14,10 @@ interface Listing {
   publishedAt: string | null;
   createdAt: string;
   productType: string | null;
+  views: number | null;
+  favorites: number | null;
+  sales: number | null;
+  conversionRate: number | null;
 }
 
 export default function ListingsPage() {
@@ -61,33 +65,46 @@ export default function ListingsPage() {
               <th className="text-left px-4 py-3 font-medium text-gray-500">Product</th>
               <th className="text-left px-4 py-3 font-medium text-gray-500">Status</th>
               <th className="text-left px-4 py-3 font-medium text-gray-500">Price</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-500">SEO</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-500">Published</th>
+              <th className="text-right px-4 py-3 font-medium text-gray-500">Views</th>
+              <th className="text-right px-4 py-3 font-medium text-gray-500">Favs</th>
+              <th className="text-right px-4 py-3 font-medium text-gray-500">Sales</th>
+              <th className="text-right px-4 py-3 font-medium text-gray-500">Conv%</th>
               <th className="text-left px-4 py-3 font-medium text-gray-500">Link</th>
             </tr>
           </thead>
           <tbody className="divide-y">
-            {listings.map((listing) => (
-              <tr key={listing.id} className="hover:bg-gray-50">
-                <td className="px-4 py-3 font-medium max-w-xs truncate">{listing.title}</td>
-                <td className="px-4 py-3 text-gray-600">{listing.productType ? getProductDisplayName(listing.productType) : "—"}</td>
-                <td className="px-4 py-3"><StatusBadge status={listing.status} /></td>
-                <td className="px-4 py-3">${listing.finalPrice.toFixed(2)}</td>
-                <td className="px-4 py-3 text-gray-500">{listing.seoScore ?? "—"}</td>
-                <td className="px-4 py-3 text-gray-400 text-xs">
-                  {listing.publishedAt ? new Date(listing.publishedAt).toLocaleDateString() : "—"}
-                </td>
-                <td className="px-4 py-3">
-                  {listing.etsyUrl ? (
-                    <a href={listing.etsyUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline text-xs">
-                      View
-                    </a>
-                  ) : "—"}
-                </td>
-              </tr>
-            ))}
+            {listings.map((listing) => {
+              const isZombie = (listing.views ?? 0) > 100 && (listing.sales ?? 0) === 0;
+              return (
+                <tr key={listing.id} className={`hover:bg-gray-50 ${isZombie ? "bg-red-50" : ""}`}>
+                  <td className="px-4 py-3 font-medium max-w-xs truncate" title={listing.title}>
+                    {listing.title}
+                    {isZombie && <span className="ml-1 text-xs text-red-500" title="High views, zero sales">!</span>}
+                  </td>
+                  <td className="px-4 py-3 text-gray-600 text-xs">{listing.productType ? getProductDisplayName(listing.productType) : "—"}</td>
+                  <td className="px-4 py-3"><StatusBadge status={listing.status} /></td>
+                  <td className="px-4 py-3">${listing.finalPrice.toFixed(2)}</td>
+                  <td className="px-4 py-3 text-right text-gray-500">{listing.views ?? "—"}</td>
+                  <td className="px-4 py-3 text-right text-gray-500">{listing.favorites ?? "—"}</td>
+                  <td className="px-4 py-3 text-right font-medium">{listing.sales ?? "—"}</td>
+                  <td className="px-4 py-3 text-right">
+                    {listing.conversionRate != null
+                      ? <span className={listing.conversionRate >= 2 ? "text-green-600 font-medium" : listing.conversionRate === 0 ? "text-gray-400" : "text-gray-600"}>{listing.conversionRate.toFixed(1)}%</span>
+                      : "—"
+                    }
+                  </td>
+                  <td className="px-4 py-3">
+                    {listing.etsyUrl ? (
+                      <a href={listing.etsyUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline text-xs">
+                        View
+                      </a>
+                    ) : "—"}
+                  </td>
+                </tr>
+              );
+            })}
             {listings.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-500">No listings found</td></tr>
+              <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-500">No listings found</td></tr>
             )}
           </tbody>
         </table>

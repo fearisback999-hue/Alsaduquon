@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { etsyListings, printifyProducts } from "@/lib/db/schema";
+import { etsyListings, printifyProducts, listingMetrics } from "@/lib/db/schema";
 import { eq, desc, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
@@ -33,9 +33,14 @@ export async function GET(request: NextRequest) {
       publishedAt: etsyListings.publishedAt,
       createdAt: etsyListings.createdAt,
       productType: printifyProducts.productType,
+      views: listingMetrics.views,
+      favorites: listingMetrics.favorites,
+      sales: listingMetrics.sales,
+      conversionRate: listingMetrics.conversionRate,
     })
     .from(etsyListings)
     .leftJoin(printifyProducts, eq(etsyListings.printifyProductId, printifyProducts.id))
+    .leftJoin(listingMetrics, eq(listingMetrics.etsyListingId, etsyListings.id))
     .where(condition)
     .orderBy(desc(etsyListings.createdAt))
     .limit(limit)

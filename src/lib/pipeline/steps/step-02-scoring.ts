@@ -1,11 +1,12 @@
 import type { PipelineContext, StepResult } from "../context";
-import { niches } from "@/lib/db/schema";
+import { niches, settings } from "@/lib/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import { chatCompletion } from "@/lib/ai/client";
 import { trackTextUsage } from "@/lib/ai/token-tracker";
 import { enforcebudget } from "@/lib/cost/guard";
 import { SCORING_WEIGHTS, SCORE_THRESHOLD } from "@/lib/types";
 import { formatSalesContextForScoring } from "@/lib/pipeline/sales-feedback";
+import { getActiveSeasons, matchNicheToSeason } from "@/lib/pipeline/seasonal-calendar";
 
 export default async function execute(context: PipelineContext): Promise<StepResult> {
   if (context.dryRun) {
@@ -23,6 +24,11 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
   // Load sales context once for all niches
   const salesContext = await formatSalesContextForScoring();
+
+  // Check if seasonal boost is enabled
+  const seasonalSetting = await context.db.select().from(settings).where(eq(settings.key, "seasonal_boost_enabled")).get();
+  const seasonalBoostEnabled = seasonalSetting?.value !== "false"; // default true
+  const activeSeasons = seasonalBoostEnabled ? getActiveSeasons() : [];
 
   let approved = 0;
   let rejected = 0;
@@ -140,18 +146,28 @@ Return JSON only:
 
     try {
       const scores = JSON.parse(result.content);
-      const composite =
+      let composite =
         (scores.search_volume_score ?? 5) * SCORING_WEIGHTS.searchVolume +
         (scores.competition_score ?? 5) * SCORING_WEIGHTS.competition +
         (scores.sales_velocity_score ?? 5) * SCORING_WEIGHTS.salesVelocity +
         (scores.seasonality_score ?? 5) * SCORING_WEIGHTS.seasonality +
         (scores.trending_score ?? 5) * SCORING_WEIGHTS.trending;
 
+      // Apply seasonal boost if niche matches an active season
+      let seasonalMatch: string | null = null;
+      if (activeSeasons.length > 0) {
+        const match = matchNicheToSeason(niche.name, activeSeasons);
+        if (match) {
+          composite += match.scoreBoost;
+          seasonalMatch = match.name;
+        }
+      }
+
       const passed = composite >= SCORE_THRESHOLD;
 
       await context.db.update(niches).set({
         compositeScore: Math.round(composite * 100) / 100,
-        scoreBreakdown: JSON.stringify({ ...scores, pre_research: research }),
+        scoreBreakdown: JSON.stringify({ ...scores, pre_research: research, seasonal_boost: seasonalMatch }),
         passedThreshold: passed,
         salesVelocity: scores.sales_velocity_score,
         seasonalityScore: scores.seasonality_score,

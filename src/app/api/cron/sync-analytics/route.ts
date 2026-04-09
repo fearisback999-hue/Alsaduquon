@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { aggregateNicheAnalytics, aggregateDailyAnalytics } from "@/lib/analytics/aggregator";
+import { syncListingMetrics } from "@/lib/analytics/listing-metrics";
 import { log } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +12,7 @@ export async function GET() {
 
     await aggregateNicheAnalytics();
     await aggregateDailyAnalytics(today);
+    await syncListingMetrics();
 
     log("info", `Analytics sync completed for ${today}`);
     return NextResponse.json({ success: true, date: today });
