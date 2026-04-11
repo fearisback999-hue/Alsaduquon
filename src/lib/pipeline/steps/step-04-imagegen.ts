@@ -2,6 +2,7 @@ import type { PipelineContext, StepResult } from "../context";
 import { designConcepts, generatedImages } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { generateImage, analyzeImage } from "@/lib/ai/client";
+import { ImageQualitySchema } from "@/lib/ai/schemas";
 import { trackImageUsage, trackTextUsage } from "@/lib/ai/token-tracker";
 import { enforcebudget } from "@/lib/cost/guard";
 import { persistImage } from "@/lib/images/storage";
@@ -35,37 +36,6 @@ Return JSON:
 }
 
 An image passes if overall_score >= 6 AND no individual score is below 4.`;
-}
-
-interface QualityResult {
-  overall_score: number;
-  pass: boolean;
-  issues: string[];
-  refinement_suggestion: string;
-  composition: number;
-  text_legibility: number;
-  print_suitability: number;
-  commercial_appeal: number;
-  technical_quality: number;
-}
-
-function parseQualityResult(content: string): QualityResult | null {
-  try {
-    const parsed = JSON.parse(content);
-    return {
-      overall_score: parsed.overall_score ?? 5,
-      pass: parsed.pass ?? (parsed.overall_score >= 6),
-      issues: parsed.issues ?? [],
-      refinement_suggestion: parsed.refinement_suggestion ?? "",
-      composition: parsed.composition ?? 5,
-      text_legibility: parsed.text_legibility ?? 5,
-      print_suitability: parsed.print_suitability ?? 5,
-      commercial_appeal: parsed.commercial_appeal ?? 5,
-      technical_quality: parsed.technical_quality ?? 5,
-    };
-  } catch {
-    return null;
-  }
 }
 
 export default async function execute(context: PipelineContext): Promise<StepResult> {
@@ -132,7 +102,8 @@ export default async function execute(context: PipelineContext): Promise<StepRes
             systemPrompt: QUALITY_SYSTEM_PROMPT,
             maxTokens: 400,
             temperature: 0.2,
-            jsonMode: true,
+            schema: ImageQualitySchema,
+            schemaName: "image_quality",
           },
         );
 
@@ -145,7 +116,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         });
         totalCost += GPT4O_VISION_COST_ESTIMATE;
 
-        const quality = parseQualityResult(qualityCheck.content);
+        const quality = qualityCheck.parsed;
 
         if (quality && !quality.pass && attempt < maxAttempts) {
           // Quality failed — record this attempt and refine prompt for next try

@@ -1,12 +1,14 @@
 import type { PipelineContext, StepResult } from "../context";
 import { niches, designConcepts } from "@/lib/db/schema";
 import { eq, inArray } from "drizzle-orm";
-import { chatCompletion } from "@/lib/ai/client";
+import { chatCompletion, StructuredOutputError } from "@/lib/ai/client";
+import { DesignConceptsSchema } from "@/lib/ai/schemas";
 import { trackTextUsage } from "@/lib/ai/token-tracker";
 import { fullModeration } from "@/lib/ai/moderation";
 import { enforcebudget } from "@/lib/cost/guard";
 import { formatSalesContextForConcepts } from "@/lib/pipeline/sales-feedback";
 import { formatSeasonalContext } from "@/lib/pipeline/seasonal-calendar";
+import { log } from "@/lib/logger";
 
 const SYSTEM_PROMPT = `You are a creative director for a successful Etsy print-on-demand brand. You understand that different products require different design approaches — a mug design should be different from a t-shirt design. You create commercially viable designs across diverse artistic styles. Your designs sell because they match current market trends and target specific buyer personas. Avoid copyrighted characters, trademarked phrases, and political content.`;
 
@@ -81,29 +83,29 @@ Return JSON:
   ]
 }`;
 
-    const result = await chatCompletion(prompt, {
-      systemPrompt: SYSTEM_PROMPT,
-      maxTokens: 3000,
-      temperature: 0.8,
-      jsonMode: true,
-    });
-
-    await trackTextUsage({
-      model: result.model,
-      operation: "concept_generation",
-      inputTokens: result.inputTokens,
-      outputTokens: result.outputTokens,
-      pipelineRunId: context.pipelineRunId,
-    });
-
     try {
-      const parsed = JSON.parse(result.content);
-      const concepts = parsed.concepts ?? [];
+      const result = await chatCompletion(prompt, {
+        systemPrompt: SYSTEM_PROMPT,
+        maxTokens: 3000,
+        temperature: 0.8,
+        schema: DesignConceptsSchema,
+        schemaName: "design_concepts",
+      });
+
+      await trackTextUsage({
+        model: result.model,
+        operation: "concept_generation",
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+        pipelineRunId: context.pipelineRunId,
+      });
+
+      const concepts = result.parsed?.concepts ?? [];
 
       // Soft diversity check — log warning but don't reject
-      const designTypes = new Set(concepts.map((c: Record<string, unknown>) => c.design_type));
+      const designTypes = new Set(concepts.map((c) => c.design_type));
       if (designTypes.size < 2 && concepts.length >= 3) {
-        console.warn(`[Step 03] Low diversity for niche "${niche.name}": all concepts are ${Array.from(designTypes)[0]}`);
+        log("warn", `[Step 03] Low diversity for niche "${niche.name}": all concepts are ${Array.from(designTypes)[0]}`);
       }
 
       for (let i = 0; i < concepts.length && i < 5; i++) {
@@ -114,9 +116,9 @@ Return JSON:
 
         // Store enriched color palette with recommended products and style
         const enrichedPalette = JSON.stringify({
-          colors: concept.color_palette ?? [],
-          recommended_products: concept.recommended_products ?? [],
-          style_category: concept.style_category ?? "unknown",
+          colors: concept.color_palette,
+          recommended_products: concept.recommended_products,
+          style_category: concept.style_category,
         });
 
         if (!modResult.passed) {
@@ -128,7 +130,7 @@ Return JSON:
             description: concept.description,
             stylePrompt: concept.style_prompt,
             targetAudience: concept.target_audience,
-            designType: concept.design_type ?? "hybrid",
+            designType: concept.design_type,
             colorPalette: enrichedPalette,
             status: "rejected",
             moderationResult: JSON.stringify(modResult),
@@ -144,7 +146,7 @@ Return JSON:
           description: concept.description,
           stylePrompt: concept.style_prompt,
           targetAudience: concept.target_audience,
-          designType: concept.design_type ?? "hybrid",
+          designType: concept.design_type,
           colorPalette: enrichedPalette,
           status: "moderated", // Passed moderation, ready for image gen
           moderationResult: JSON.stringify(modResult),
@@ -152,8 +154,17 @@ Return JSON:
         });
         totalConcepts++;
       }
-    } catch {
-      // Parse error — skip this niche's concepts
+    } catch (error) {
+      if (error instanceof StructuredOutputError) {
+        log("error", `[Step 03] Concept schema validation failed for niche "${niche.name}"`, {
+          schemaName: error.schemaName,
+          issues: error.zodIssues,
+        });
+      } else {
+        log("error", `[Step 03] Concept generation failed for niche "${niche.name}"`, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 

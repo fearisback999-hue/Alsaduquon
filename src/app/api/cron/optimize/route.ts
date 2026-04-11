@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { etsyListings, listingMetrics, printifyProducts, designConcepts, niches } from "@/lib/db/schema";
 import { eq, and, sql, lt, gt } from "drizzle-orm";
 import { chatCompletion } from "@/lib/ai/client";
+import { ListingOptimizationSchema } from "@/lib/ai/schemas";
 import { trackTextUsage } from "@/lib/ai/token-tracker";
 import { enforcebudget } from "@/lib/cost/guard";
 import * as etsy from "@/lib/external/etsy";
@@ -95,7 +96,8 @@ Return JSON:
           systemPrompt: "You are an Etsy SEO optimization expert. Your changes consistently improve listing conversion rates by 30-50%. Focus on buyer intent keywords, not just search volume.",
           maxTokens: 400,
           temperature: 0.5,
-          jsonMode: true,
+          schema: ListingOptimizationSchema,
+          schemaName: "listing_optimization",
         });
 
         await trackTextUsage({
@@ -105,9 +107,9 @@ Return JSON:
           outputTokens: result.outputTokens,
         });
 
-        const parsed = JSON.parse(result.content);
-        const newTitle = parsed.new_title?.slice(0, 140);
-        const newTags = (parsed.new_tags ?? []).slice(0, 13);
+        const optimization = result.parsed!;
+        const newTitle = optimization.new_title.slice(0, 140);
+        const newTags = optimization.new_tags.slice(0, 13);
 
         if (newTitle && newTags.length > 0 && listing.etsyListingId) {
           // Update on Etsy
@@ -123,7 +125,7 @@ Return JSON:
             updatedAt: new Date().toISOString(),
           }).where(eq(etsyListings.id, listing.listingId));
 
-          log("info", `Optimized listing: "${listing.title}" → "${newTitle}" (${parsed.changes_reasoning})`);
+          log("info", `Optimized listing: "${listing.title}" → "${newTitle}" (${optimization.changes_reasoning})`);
           optimized++;
         }
       } catch (error) {

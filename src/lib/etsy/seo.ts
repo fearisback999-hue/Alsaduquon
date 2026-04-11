@@ -1,4 +1,5 @@
 import { chatCompletion } from "@/lib/ai/client";
+import { ListingTagsSchema } from "@/lib/ai/schemas";
 import { trackTextUsage } from "@/lib/ai/token-tracker";
 
 export async function generateListingTitle(
@@ -95,13 +96,14 @@ Rules:
 - Prioritize high-search-volume terms
 - No duplicate words across tags
 
-Return a JSON array of strings, e.g. ["tag1", "tag2", ...]`;
+Return JSON: {"tags": ["tag1", "tag2", ...]}`;
 
   const result = await chatCompletion(prompt, {
     systemPrompt: "You are an Etsy SEO specialist. Generate tags that maximize search visibility.",
     maxTokens: 300,
     temperature: 0.5,
-    jsonMode: true,
+    schema: ListingTagsSchema,
+    schemaName: "listing_tags",
   });
 
   await trackTextUsage({
@@ -112,13 +114,7 @@ Return a JSON array of strings, e.g. ["tag1", "tag2", ...]`;
     pipelineRunId,
   });
 
-  try {
-    const parsed = JSON.parse(result.content);
-    const tags = Array.isArray(parsed) ? parsed : parsed.tags ?? [];
-    return tags.slice(0, maxTags).map((t: string) => t.slice(0, 20));
-  } catch {
-    return result.content.split(",").map((t) => t.trim().slice(0, 20)).slice(0, maxTags);
-  }
+  return (result.parsed?.tags ?? []).slice(0, maxTags).map((t) => t.slice(0, 20));
 }
 
 export function calculateSEOScore(title: string, description: string, tags: string[]): number {
