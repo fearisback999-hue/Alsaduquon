@@ -1,11 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isValidSession } from "@/lib/auth/sessions";
 
+const CSP_DIRECTIVES = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: https:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join("; ");
+
 function addSecurityHeaders(response: NextResponse): NextResponse {
   response.headers.set("X-Frame-Options", "DENY");
   response.headers.set("X-Content-Type-Options", "nosniff");
   response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   response.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  response.headers.set("Content-Security-Policy", CSP_DIRECTIVES);
   if (process.env.NODE_ENV === "production") {
     response.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   }
@@ -15,10 +28,16 @@ function addSecurityHeaders(response: NextResponse): NextResponse {
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Cron routes use CRON_SECRET header
+  // Cron routes require CRON_SECRET AND (in production) the x-vercel-cron header
+  // that Vercel injects. This prevents an attacker with the secret from triggering
+  // cron jobs externally.
   if (pathname.startsWith("/api/cron/")) {
     const cronSecret = request.headers.get("authorization")?.replace("Bearer ", "");
-    if (cronSecret !== process.env.CRON_SECRET) {
+    const fromVercelCron = request.headers.get("x-vercel-cron") === "1";
+    const authorized =
+      cronSecret === process.env.CRON_SECRET &&
+      (fromVercelCron || process.env.NODE_ENV !== "production");
+    if (!authorized) {
       return addSecurityHeaders(
         NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
       );

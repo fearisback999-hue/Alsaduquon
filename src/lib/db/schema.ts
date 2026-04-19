@@ -404,6 +404,14 @@ export const sessions = sqliteTable("sessions", {
   expiresIdx: index("sessions_expires_idx").on(table.expiresAt),
 }));
 
+export const loginAttempts = sqliteTable("login_attempts", {
+  ip: text("ip").primaryKey(),
+  count: integer("count").notNull().default(0),
+  lastAttemptAt: integer("last_attempt_at").notNull(),
+}, (table) => ({
+  lastAttemptIdx: index("login_attempts_last_attempt_idx").on(table.lastAttemptAt),
+}));
+
 // ============================================================
 // SETTINGS (key-value config)
 // ============================================================

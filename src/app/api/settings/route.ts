@@ -14,6 +14,7 @@ const ALLOWED_SETTINGS_KEYS = [
   "dalle_model", "dalle_quality", "gpt_model",
   "enabled_product_types",
   "seasonal_boost_enabled",
+  "autopilot_enabled",
 ] as const;
 
 const updateSettingSchema = z.object({

@@ -11,6 +11,13 @@ export const maxDuration = 300; // 5 minutes (Vercel Pro)
 export async function GET(request: NextRequest) {
   // Auth is handled by middleware (CRON_SECRET)
 
+  // Respect autopilot toggle — when disabled, skip scheduled runs. Manual
+  // triggers via /api/pipeline/trigger still work.
+  const autopilotSetting = await db.select().from(settings).where(eq(settings.key, "autopilot_enabled")).get();
+  if (autopilotSetting?.value === "false") {
+    return NextResponse.json({ status: "skipped", reason: "Autopilot disabled" });
+  }
+
   // Check if this is the second daily run (2 PM UTC) and if user wants it
   const currentHour = new Date().getUTCHours();
   if (currentHour >= 12) {

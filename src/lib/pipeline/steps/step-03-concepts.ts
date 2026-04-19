@@ -9,6 +9,7 @@ import { enforcebudget } from "@/lib/cost/guard";
 import { formatSalesContextForConcepts } from "@/lib/pipeline/sales-feedback";
 import { formatSeasonalContext } from "@/lib/pipeline/seasonal-calendar";
 import { log } from "@/lib/logger";
+import { sanitizeForPrompt } from "@/lib/ai/sanitize";
 
 const SYSTEM_PROMPT = `You are a creative director for a successful Etsy print-on-demand brand. You understand that different products require different design approaches — a mug design should be different from a t-shirt design. You create commercially viable designs across diverse artistic styles. Your designs sell because they match current market trends and target specific buyer personas. Avoid copyrighted characters, trademarked phrases, and political content.`;
 
@@ -40,12 +41,13 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
   for (const niche of approvedNiches) {
     await enforcebudget(0.05);
+    const safeNicheName = sanitizeForPrompt(niche.name);
 
     // Get sales feedback for this niche
     const salesContext = await formatSalesContextForConcepts(niche.name);
     const seasonalContext = formatSeasonalContext();
 
-    const prompt = `Generate 5 print-on-demand design concepts for the niche: "${niche.name}"
+    const prompt = `Generate 5 print-on-demand design concepts for the niche: "${safeNicheName}"
 
 ${salesContext}
 

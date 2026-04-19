@@ -9,6 +9,7 @@ import { SCORING_WEIGHTS, SCORE_THRESHOLD } from "@/lib/types";
 import { formatSalesContextForScoring } from "@/lib/pipeline/sales-feedback";
 import { getActiveSeasons, matchNicheToSeason } from "@/lib/pipeline/seasonal-calendar";
 import { log } from "@/lib/logger";
+import { sanitizeForPrompt } from "@/lib/ai/sanitize";
 
 export default async function execute(context: PipelineContext): Promise<StepResult> {
   if (context.dryRun) {
@@ -38,11 +39,12 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
   for (const niche of toScore) {
     await enforcebudget(0.02); // Pre-research + scoring calls
+    const safeNicheName = sanitizeForPrompt(niche.name);
 
     // Phase A: Pre-research — structured market assessment
     const preResearchPrompt = `Provide a brief market assessment for this print-on-demand niche.
 
-Niche: "${niche.name}"
+Niche: "${safeNicheName}"
 
 Available data:
 - Search volume: ${niche.searchVolume ?? "not available"}
@@ -103,7 +105,7 @@ Return JSON:
     // Phase B: Scoring with enriched context
     const scoringPrompt = `Analyze this print-on-demand niche and rate each metric on a scale of 0-10.
 
-Niche: "${niche.name}"
+Niche: "${safeNicheName}"
 
 HARD DATA:
 - Search volume: ${niche.searchVolume ?? "not available"} monthly searches

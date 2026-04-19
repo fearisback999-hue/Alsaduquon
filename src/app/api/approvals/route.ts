@@ -1,39 +1,59 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { approvalQueueEntries, etsyListings, printifyProducts, mockups, designConcepts, niches } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const entries = await db
-    .select()
+  const rows = await db
+    .select({
+      entry: approvalQueueEntries,
+      listing: etsyListings,
+      product: printifyProducts,
+      concept: designConcepts,
+      niche: niches,
+    })
     .from(approvalQueueEntries)
+    .leftJoin(etsyListings, eq(approvalQueueEntries.etsyListingId, etsyListings.id))
+    .leftJoin(printifyProducts, eq(etsyListings.printifyProductId, printifyProducts.id))
+    .leftJoin(designConcepts, eq(printifyProducts.designConceptId, designConcepts.id))
+    .leftJoin(niches, eq(designConcepts.nicheId, niches.id))
     .where(eq(approvalQueueEntries.status, "pending"))
     .orderBy(approvalQueueEntries.batchNumber, approvalQueueEntries.batchOrder)
     .all();
 
-  // Enrich with listing and product data
-  const enriched = await Promise.all(
-    entries.map(async (entry) => {
-      const listing = await db.select().from(etsyListings).where(eq(etsyListings.id, entry.etsyListingId)).get();
-      if (!listing) return { ...entry, listing: null, product: null, mockups: [], concept: null, niche: null };
+  if (rows.length === 0) {
+    return NextResponse.json({ entries: [] });
+  }
 
-      const product = await db.select().from(printifyProducts).where(eq(printifyProducts.id, listing.printifyProductId)).get();
-      const productMockups = product ? await db.select().from(mockups).where(eq(mockups.printifyProductId, product.id)).all() : [];
-      const concept = product ? await db.select().from(designConcepts).where(eq(designConcepts.id, product.designConceptId)).get() : null;
-      const niche = concept ? await db.select().from(niches).where(eq(niches.id, concept.nicheId)).get() : null;
-
-      return {
-        ...entry,
-        listing,
-        product,
-        mockups: productMockups,
-        concept,
-        niche,
-      };
-    }),
+  const productIds = Array.from(
+    new Set(rows.map((r) => r.product?.id).filter((id): id is string => Boolean(id))),
   );
 
-  return NextResponse.json({ entries: enriched });
+  const allMockups = productIds.length > 0
+    ? await db
+        .select()
+        .from(mockups)
+        .where(inArray(mockups.printifyProductId, productIds))
+        .all()
+    : [];
+
+  const mockupsByProduct = new Map<string, typeof allMockups>();
+  for (const m of allMockups) {
+    const arr = mockupsByProduct.get(m.printifyProductId) ?? [];
+    arr.push(m);
+    mockupsByProduct.set(m.printifyProductId, arr);
+  }
+
+  const entries = rows.map((row) => ({
+    ...row.entry,
+    listing: row.listing,
+    product: row.product,
+    concept: row.concept,
+    niche: row.niche,
+    mockups: row.product ? mockupsByProduct.get(row.product.id) ?? [] : [],
+  }));
+
+  return NextResponse.json({ entries });
 }

@@ -12,8 +12,8 @@ export async function GET() {
   try {
     await db.select().from(settings).limit(1).get();
     checks.database = { status: "ok" };
-  } catch (error) {
-    checks.database = { status: "error", detail: error instanceof Error ? error.message : "Unknown" };
+  } catch {
+    checks.database = { status: "error" };
   }
 
   // Last pipeline run

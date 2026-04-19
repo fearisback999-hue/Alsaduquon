@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { useToast } from "@/components/ui/toast";
 import { getProductDisplayName } from "@/lib/printify/product-config";
 
 interface ApprovalEntry {
@@ -20,15 +21,23 @@ export default function ApprovalsPage() {
   const [feedback, setFeedback] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const toast = useToast();
 
   async function loadData() {
     setLoading(true);
-    const res = await fetch("/api/approvals");
-    if (res.ok) {
-      const data = await res.json();
-      setEntries(data.entries ?? []);
+    try {
+      const res = await fetch("/api/approvals");
+      if (res.ok) {
+        const data = await res.json();
+        setEntries(data.entries ?? []);
+      } else {
+        toast.error("Failed to load approvals");
+      }
+    } catch {
+      toast.error("Network error loading approvals");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   useEffect(() => { loadData(); }, []);
@@ -42,14 +51,25 @@ export default function ApprovalsPage() {
       feedback: feedback[id] ?? undefined,
     }));
 
-    await fetch("/api/approvals/batch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ approvals }),
-    });
-
-    setSubmitting(false);
-    loadData();
+    try {
+      const res = await fetch("/api/approvals/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approvals }),
+      });
+      if (res.ok) {
+        const verb = action === "approved" ? "Approved" : "Rejected";
+        toast.success(`${verb} ${targets.length} listing${targets.length === 1 ? "" : "s"}`);
+      } else {
+        const data = await res.json().catch(() => null);
+        toast.error(data?.error ?? "Action failed");
+      }
+    } catch {
+      toast.error("Network error submitting approvals");
+    } finally {
+      setSubmitting(false);
+      loadData();
+    }
   }
 
   if (loading) return <div className="p-8 text-center text-gray-500">Loading approvals...</div>;

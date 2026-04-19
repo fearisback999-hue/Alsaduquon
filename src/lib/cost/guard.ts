@@ -31,26 +31,13 @@ export async function canAfford(estimatedCost: number): Promise<boolean> {
 }
 
 /**
- * Atomic budget enforcement: checks AND increments in a single SQL statement
- * to prevent TOCTOU race conditions in concurrent requests.
+ * Budget enforcement: throws if estimated spend would exceed the daily cap.
+ * Does NOT increment totalCost — recordCost() is the single source of truth
+ * for actual spend. Call this as a pre-flight check before expensive ops.
  */
 export async function enforceBudget(estimatedCost: number): Promise<void> {
-  const date = today();
   const daily = await getOrCreateDailyCost();
-
-  // Atomic check: only update if the new total would be within budget
-  const result = await db
-    .update(dailyCosts)
-    .set({
-      totalCost: sql`${dailyCosts.totalCost} + ${estimatedCost}`,
-      updatedAt: new Date().toISOString(),
-    })
-    .where(
-      sql`${dailyCosts.date} = ${date} AND ${dailyCosts.totalCost} + ${estimatedCost} <= ${dailyCosts.maxDailyCost}`,
-    )
-    .returning();
-
-  if (result.length === 0) {
+  if (daily.totalCost + estimatedCost > daily.maxDailyCost) {
     throw new BudgetExceededError(daily.totalCost + estimatedCost, daily.maxDailyCost);
   }
 }
@@ -68,24 +55,12 @@ export async function checkListingLimit(): Promise<{ remaining: number; used: nu
 }
 
 /**
- * Atomic listing limit enforcement: checks AND increments in one SQL statement.
+ * Listing limit enforcement: throws if already at the daily cap.
+ * Does NOT increment — incrementListingCount() is called on successful publish.
  */
 export async function enforceListingLimit(): Promise<void> {
-  const date = today();
   const daily = await getOrCreateDailyCost();
-
-  const result = await db
-    .update(dailyCosts)
-    .set({
-      listingsCreated: sql`${dailyCosts.listingsCreated} + 1`,
-      updatedAt: new Date().toISOString(),
-    })
-    .where(
-      sql`${dailyCosts.date} = ${date} AND ${dailyCosts.listingsCreated} < ${dailyCosts.maxDailyListings}`,
-    )
-    .returning();
-
-  if (result.length === 0) {
+  if (daily.listingsCreated >= daily.maxDailyListings) {
     throw new ListingLimitError(daily.listingsCreated, daily.maxDailyListings);
   }
 }
