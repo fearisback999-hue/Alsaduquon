@@ -391,6 +391,20 @@ export const listingMetrics = sqliteTable("listing_metrics", {
 }));
 
 // ============================================================
+// AUTH SESSIONS
+// ============================================================
+
+export const sessions = sqliteTable("sessions", {
+  token: text("token").primaryKey(),
+  expiresAt: integer("expires_at").notNull(),
+  createdAt: integer("created_at").notNull().$defaultFn(() => Date.now()),
+  ip: text("ip"),
+  userAgent: text("user_agent"),
+}, (table) => ({
+  expiresIdx: index("sessions_expires_idx").on(table.expiresAt),
+}));
+
+// ============================================================
 // SETTINGS (key-value config)
 // ============================================================
 

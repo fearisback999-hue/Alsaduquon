@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import crypto from "crypto";
+import { createSession, SESSION_TTL_MS } from "@/lib/auth/sessions";
 
 export const dynamic = "force-dynamic";
 
@@ -44,16 +45,8 @@ function timingSafeCompare(a: string, b: string): boolean {
   return crypto.timingSafeEqual(bufA, bufB);
 }
 
-// Generate a session token (NOT the password) for the cookie
 function generateSessionToken(): string {
   return crypto.randomBytes(32).toString("hex");
-}
-
-// Use shared global session set (same instance as middleware)
-function getValidSessions(): Set<string> {
-  const g = globalThis as unknown as { _neopodSessions?: Set<string> };
-  if (!g._neopodSessions) g._neopodSessions = new Set();
-  return g._neopodSessions;
 }
 
 export async function POST(request: NextRequest) {
@@ -74,17 +67,18 @@ export async function POST(request: NextRequest) {
   const { password } = body;
   const adminPassword = process.env.ADMIN_PASSWORD ?? "";
 
-  if (!timingSafeCompare(password, adminPassword)) {
+  if (!adminPassword || !timingSafeCompare(password, adminPassword)) {
     recordFailedAttempt(ip);
     return NextResponse.json({ error: "Invalid password" }, { status: 401 });
   }
 
-  // Clear failed attempts on success
   loginAttempts.delete(ip);
 
-  // Generate a session token instead of storing the password
   const sessionToken = generateSessionToken();
-  getValidSessions().add(sessionToken);
+  await createSession(sessionToken, {
+    ip,
+    userAgent: request.headers.get("user-agent") ?? undefined,
+  });
 
   const cookieStore = await cookies();
   cookieStore.set("neo-pod-auth", sessionToken, {
@@ -92,7 +86,7 @@ export async function POST(request: NextRequest) {
     secure: process.env.NODE_ENV === "production",
     sameSite: "strict",
     path: "/",
-    maxAge: 60 * 60 * 24 * 7, // 7 days
+    maxAge: Math.floor(SESSION_TTL_MS / 1000),
   });
 
   return NextResponse.json({ success: true });

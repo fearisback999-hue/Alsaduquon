@@ -1,17 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-
-// Session tokens stored in memory per serverless instance.
-// For a single-user admin dashboard this is sufficient.
-// The login route exports isValidSession but middleware can't import app code,
-// so we use a shared module approach via a global set.
-const getValidSessions = (): Set<string> => {
-  const g = globalThis as unknown as { _neopodSessions?: Set<string> };
-  if (!g._neopodSessions) g._neopodSessions = new Set();
-  return g._neopodSessions;
-};
-
-// Re-export for login route to use the same set
-export { getValidSessions };
+import { isValidSession } from "@/lib/auth/sessions";
 
 function addSecurityHeaders(response: NextResponse): NextResponse {
   response.headers.set("X-Frame-Options", "DENY");
@@ -24,7 +12,7 @@ function addSecurityHeaders(response: NextResponse): NextResponse {
   return response;
 }
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Cron routes use CRON_SECRET header
@@ -43,22 +31,17 @@ export function middleware(request: NextRequest) {
     return addSecurityHeaders(NextResponse.next());
   }
 
-  // Login page and login API are public
-  if (pathname === "/login" || pathname === "/api/auth/login") {
+  // Login, logout, and login page are public
+  if (pathname === "/login" || pathname === "/api/auth/login" || pathname === "/api/auth/logout") {
     return addSecurityHeaders(NextResponse.next());
   }
 
   // All other /dashboard and /api routes require auth
   if (pathname.startsWith("/dashboard") || pathname.startsWith("/api/")) {
     const authCookie = request.cookies.get("neo-pod-auth")?.value;
+    const isValid = authCookie ? await isValidSession(authCookie) : false;
 
-    // Validate session token (not the raw password)
-    const isValid = authCookie ? getValidSessions().has(authCookie) : false;
-
-    // Fallback: also accept password match for backwards compat during first login
-    const isPasswordMatch = authCookie === process.env.ADMIN_PASSWORD;
-
-    if (!isValid && !isPasswordMatch) {
+    if (!isValid) {
       if (pathname.startsWith("/api/")) {
         return addSecurityHeaders(
           NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
