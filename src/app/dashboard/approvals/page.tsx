@@ -1,8 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { Check, X, Hash, Tag, DollarSign, Package, Inbox, Sparkles } from "lucide-react";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { useToast } from "@/components/ui/toast";
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Skeleton } from "@/components/ui/skeleton";
 import { getProductDisplayName } from "@/lib/printify/product-config";
 
 interface ApprovalEntry {
@@ -72,109 +77,181 @@ export default function ApprovalsPage() {
     }
   }
 
-  if (loading) return <div className="p-8 text-center text-gray-500">Loading approvals...</div>;
+  if (loading) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-8 w-48" />
+        {[1, 2, 3].map((i) => (
+          <Skeleton key={i} className="h-40 w-full" />
+        ))}
+      </div>
+    );
+  }
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Approval Queue</h1>
+    <div className="space-y-6 animate-fade-in-up">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-fg tracking-tight">Approval Queue</h1>
+          <p className="text-sm text-fg-subtle mt-1">
+            {entries.length > 0
+              ? `${entries.length} listing${entries.length === 1 ? "" : "s"} awaiting your review.`
+              : "All caught up — nothing pending."}
+          </p>
+        </div>
         {entries.length > 0 && (
           <div className="flex gap-2">
-            <button
+            <Button
+              variant="success"
               onClick={() => handleBatchAction("approved")}
               disabled={submitting}
-              className="px-4 py-2 bg-green-600 text-white rounded-md text-sm hover:bg-green-700 disabled:opacity-50"
+              leftIcon={<Check className="h-4 w-4" />}
             >
-              Approve All ({entries.length})
-            </button>
-            <button
+              Approve all ({entries.length})
+            </Button>
+            <Button
+              variant="danger"
               onClick={() => handleBatchAction("rejected")}
               disabled={submitting}
-              className="px-4 py-2 bg-red-600 text-white rounded-md text-sm hover:bg-red-700 disabled:opacity-50"
+              leftIcon={<X className="h-4 w-4" />}
             >
-              Reject All
-            </button>
+              Reject all
+            </Button>
           </div>
         )}
       </div>
 
       {entries.length === 0 ? (
-        <div className="bg-white rounded-lg border p-8 text-center text-gray-500">
-          No listings pending approval.
-        </div>
+        <Card>
+          <EmptyState
+            icon={<Inbox className="h-6 w-6" />}
+            title="No listings pending approval"
+            description="When the pipeline completes a batch, new listings will appear here for your review."
+          />
+        </Card>
       ) : (
-        <div className="space-y-4">
-          {entries.map((entry) => (
-            <div key={entry.id} className="bg-white rounded-lg border p-4">
-              <div className="flex gap-4">
-                {/* Mockup preview */}
-                <div className="flex-shrink-0 w-32 h-32 bg-gray-100 rounded overflow-hidden">
-                  {entry.mockups[0]?.storageUrl ? (
-                    <img src={entry.mockups[0].storageUrl} alt="Mockup" className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-gray-400 text-xs">No mockup</div>
-                  )}
-                </div>
-
-                {/* Listing info */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h3 className="font-medium text-gray-900 truncate">{entry.listing?.title ?? "Untitled"}</h3>
-                    <StatusBadge status={entry.status} />
+        <div className="space-y-3">
+          {entries.map((entry, idx) => {
+            let tags: string[] = [];
+            try {
+              tags = entry.listing?.tags ? JSON.parse(entry.listing.tags) : [];
+            } catch {
+              tags = [];
+            }
+            return (
+              <Card
+                key={entry.id}
+                className="p-4 animate-fade-in-up"
+                hover
+                style={{ animationDelay: `${Math.min(idx * 40, 320)}ms` }}
+              >
+                <div className="flex gap-4">
+                  {/* Mockup */}
+                  <div className="flex-shrink-0 w-28 h-28 sm:w-32 sm:h-32 bg-surface-2 rounded-lg overflow-hidden ring-1 ring-border relative group">
+                    {entry.mockups[0]?.storageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={entry.mockups[0].storageUrl}
+                        alt="Mockup"
+                        className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-fg-faint">
+                        <Sparkles className="h-5 w-5" />
+                      </div>
+                    )}
                   </div>
 
-                  {entry.niche && (
-                    <p className="text-xs text-gray-500 mb-1">
-                      Niche: {entry.niche.name} (score: {entry.niche.compositeScore?.toFixed(1)})
-                    </p>
-                  )}
-
-                  {entry.listing?.tags && (
-                    <div className="flex flex-wrap gap-1 mb-2">
-                      {(() => { try { return JSON.parse(entry.listing.tags); } catch { return []; } })().slice(0, 8).map((tag: string, i: number) => (
-                        <span key={i} className="px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">{tag}</span>
-                      ))}
+                  {/* Info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start gap-2 mb-1">
+                      <h3 className="font-semibold text-fg truncate flex-1">{entry.listing?.title ?? "Untitled"}</h3>
+                      <StatusBadge status={entry.status} />
                     </div>
-                  )}
 
-                  <div className="flex items-center gap-4 text-sm text-gray-600">
-                    <span>${entry.listing?.finalPrice?.toFixed(2) ?? "0.00"}</span>
-                    {entry.listing?.seoScore != null && <span>SEO: {entry.listing.seoScore}/100</span>}
-                    <span>{entry.product?.productType ? getProductDisplayName(entry.product.productType) : ""}</span>
-                    <span>Batch #{entry.batchNumber}</span>
+                    {entry.niche && (
+                      <p className="text-xs text-fg-subtle mb-2">
+                        <span className="text-fg-faint">Niche:</span> {entry.niche.name}
+                        {entry.niche.compositeScore != null && (
+                          <span className="ml-2 tabular-nums">
+                            ({entry.niche.compositeScore.toFixed(1)})
+                          </span>
+                        )}
+                      </p>
+                    )}
+
+                    {tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mb-2">
+                        {tags.slice(0, 8).map((tag, i) => (
+                          <span
+                            key={i}
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-surface-2 text-fg-muted rounded text-[11px]"
+                          >
+                            <Hash className="h-2.5 w-2.5 text-fg-faint" />
+                            {tag}
+                          </span>
+                        ))}
+                        {tags.length > 8 && (
+                          <span className="text-[11px] text-fg-faint px-1.5 py-0.5">+{tags.length - 8}</span>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-4 text-xs text-fg-muted flex-wrap">
+                      <span className="flex items-center gap-1 tabular-nums">
+                        <DollarSign className="h-3 w-3 text-fg-faint" />
+                        {entry.listing?.finalPrice?.toFixed(2) ?? "0.00"}
+                      </span>
+                      {entry.listing?.seoScore != null && (
+                        <span className="flex items-center gap-1 tabular-nums">
+                          <Tag className="h-3 w-3 text-fg-faint" />
+                          SEO {entry.listing.seoScore}/100
+                        </span>
+                      )}
+                      {entry.product?.productType && (
+                        <span className="flex items-center gap-1">
+                          <Package className="h-3 w-3 text-fg-faint" />
+                          {getProductDisplayName(entry.product.productType)}
+                        </span>
+                      )}
+                      <span className="text-fg-faint">Batch #{entry.batchNumber}</span>
+                    </div>
+
+                    <input
+                      type="text"
+                      placeholder="Feedback (optional)"
+                      maxLength={500}
+                      value={feedback[entry.id] ?? ""}
+                      onChange={(e) => setFeedback({ ...feedback, [entry.id]: e.target.value })}
+                      className="mt-3 w-full px-3 py-1.5 bg-surface border border-border rounded-lg text-sm text-fg placeholder:text-fg-faint focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/20 transition-all"
+                    />
                   </div>
 
-                  {/* Feedback input */}
-                  <input
-                    type="text"
-                    placeholder="Feedback (optional)"
-                    maxLength={500}
-                    value={feedback[entry.id] ?? ""}
-                    onChange={(e) => setFeedback({ ...feedback, [entry.id]: e.target.value })}
-                    className="mt-2 w-full px-3 py-1.5 border border-gray-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
+                  {/* Actions */}
+                  <div className="flex flex-col gap-2 flex-shrink-0">
+                    <Button
+                      size="sm"
+                      variant="success"
+                      onClick={() => handleBatchAction("approved", [entry.id])}
+                      disabled={submitting}
+                      leftIcon={<Check className="h-3.5 w-3.5" />}
+                    >
+                      Approve
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      onClick={() => handleBatchAction("rejected", [entry.id])}
+                      disabled={submitting}
+                      leftIcon={<X className="h-3.5 w-3.5" />}
+                    >
+                      Reject
+                    </Button>
+                  </div>
                 </div>
-
-                {/* Action buttons */}
-                <div className="flex flex-col gap-2 flex-shrink-0">
-                  <button
-                    onClick={() => handleBatchAction("approved", [entry.id])}
-                    disabled={submitting}
-                    className="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700 disabled:opacity-50"
-                  >
-                    Approve
-                  </button>
-                  <button
-                    onClick={() => handleBatchAction("rejected", [entry.id])}
-                    disabled={submitting}
-                    className="px-3 py-1.5 bg-red-600 text-white rounded text-sm hover:bg-red-700 disabled:opacity-50"
-                  >
-                    Reject
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
+              </Card>
+            );
+          })}
         </div>
       )}
     </div>

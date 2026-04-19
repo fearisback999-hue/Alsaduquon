@@ -1,7 +1,12 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { Wallet, TrendingUp, CalendarDays, Layers, Cpu, Activity } from "lucide-react";
 import { StatCard } from "@/components/ui/stat-card";
+import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Sparkline } from "@/components/ui/sparkline";
+import { Progress } from "@/components/ui/progress";
 
 interface DailyCost {
   date: string;
@@ -23,8 +28,15 @@ interface TokenUsage {
   createdAt: string;
 }
 
+interface TodayEntry {
+  id: string;
+  category: string;
+  amount: number;
+  description?: string | null;
+}
+
 export default function CostsPage() {
-  const [data, setData] = useState<{ dailyCosts: DailyCost[]; todayEntries: any[]; recentTokenUsage: TokenUsage[] } | null>(null);
+  const [data, setData] = useState<{ dailyCosts: DailyCost[]; todayEntries: TodayEntry[]; recentTokenUsage: TokenUsage[] } | null>(null);
   const [loading, setLoading] = useState(true);
 
   async function loadData() {
@@ -36,126 +48,234 @@ export default function CostsPage() {
 
   useEffect(() => { loadData(); }, []);
 
-  if (loading || !data) return <div className="text-center text-gray-500 py-8">Loading costs...</div>;
+  if (loading || !data) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-8 w-48" />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-28 w-full" />)}
+        </div>
+        <Skeleton className="h-40 w-full" />
+      </div>
+    );
+  }
 
   const today = data.dailyCosts[0];
   const totalSpent = data.dailyCosts.reduce((sum, d) => sum + d.totalCost, 0);
+  const ordered = [...data.dailyCosts].reverse();
+  const costSpark = ordered.map((d) => d.totalCost);
+  const listingsSpark = ordered.map((d) => d.listingsCreated);
+
+  const maxCost = Math.max(...costSpark, 0.01);
+  const budgetPct = today ? (today.totalCost / Math.max(today.maxDailyCost, 0.01)) * 100 : 0;
+  const budgetTone: "brand" | "warning" | "danger" = budgetPct >= 90 ? "danger" : budgetPct >= 70 ? "warning" : "brand";
+
+  const aiTotal = today?.aiCost ?? 0;
+  const apiTotal = today?.apiCost ?? 0;
+  const feesTotal = today?.listingFees ?? 0;
+  const breakdownTotal = aiTotal + apiTotal + feesTotal || 0.01;
 
   return (
-    <div>
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">Cost Tracking</h1>
+    <div className="space-y-6 animate-fade-in-up">
+      <div>
+        <h1 className="text-2xl font-bold text-fg tracking-tight">Cost Tracking</h1>
+        <p className="text-sm text-fg-subtle mt-1">AI, API, and listing fee spend across the last 30 days.</p>
+      </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      {/* Stat cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
-          label="Today's Cost"
+          label="Today's Spend"
           value={`$${(today?.totalCost ?? 0).toFixed(2)}`}
           detail={`of $${(today?.maxDailyCost ?? 10).toFixed(2)} budget`}
-          color={today && today.totalCost > today.maxDailyCost * 0.8 ? "red" : "blue"}
+          tone={budgetTone}
+          icon={<Wallet className="h-4 w-4" strokeWidth={2} />}
+          sparkline={costSpark}
         />
         <StatCard
           label="Today's Listings"
           value={today?.listingsCreated ?? 0}
           detail={`of ${today?.maxDailyListings ?? 5} limit`}
-          color="blue"
+          tone="info"
+          icon={<Layers className="h-4 w-4" strokeWidth={2} />}
+          sparkline={listingsSpark}
         />
-        <StatCard label="30-Day Total" value={`$${totalSpent.toFixed(2)}`} color="gray" />
-        <StatCard label="Avg Daily Cost" value={`$${(totalSpent / Math.max(data.dailyCosts.length, 1)).toFixed(2)}`} color="gray" />
+        <StatCard
+          label="30-Day Total"
+          value={`$${totalSpent.toFixed(2)}`}
+          tone="neutral"
+          icon={<CalendarDays className="h-4 w-4" strokeWidth={2} />}
+        />
+        <StatCard
+          label="Avg Daily"
+          value={`$${(totalSpent / Math.max(data.dailyCosts.length, 1)).toFixed(2)}`}
+          tone="brand"
+          icon={<TrendingUp className="h-4 w-4" strokeWidth={2} />}
+        />
       </div>
 
-      {/* Budget bar */}
-      {today && (
-        <div className="bg-white rounded-lg border p-4 mb-6">
-          <h2 className="text-sm font-medium text-gray-500 mb-2">Today's Budget</h2>
-          <div className="w-full bg-gray-200 rounded-full h-4">
-            <div
-              className={`h-4 rounded-full transition-all ${today.totalCost > today.maxDailyCost * 0.8 ? "bg-red-500" : "bg-blue-500"}`}
-              style={{ width: `${Math.min((today.totalCost / today.maxDailyCost) * 100, 100)}%` }}
-            />
-          </div>
-          <div className="flex justify-between text-xs text-gray-400 mt-1">
-            <span>${today.totalCost.toFixed(2)} spent</span>
-            <span>${(today.maxDailyCost - today.totalCost).toFixed(2)} remaining</span>
-          </div>
-        </div>
-      )}
+      {/* Two-column: budget + breakdown */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {today && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Today's Budget</CardTitle>
+              <CardDescription>Real-time spend against your daily ceiling.</CardDescription>
+            </CardHeader>
+            <div className="px-5 pb-5 space-y-3">
+              <Progress value={today.totalCost} max={today.maxDailyCost} tone={budgetTone} size="md" />
+              <div className="flex justify-between text-xs text-fg-subtle tabular-nums">
+                <span>
+                  <span className="text-fg font-medium">${today.totalCost.toFixed(2)}</span> spent
+                </span>
+                <span>
+                  ${Math.max(0, today.maxDailyCost - today.totalCost).toFixed(2)} remaining
+                </span>
+              </div>
+            </div>
+          </Card>
+        )}
 
-      {/* Category breakdown */}
-      {today && (
-        <div className="bg-white rounded-lg border p-4 mb-6">
-          <h2 className="text-sm font-medium text-gray-500 mb-3">Today's Breakdown</h2>
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <p className="text-xs text-gray-400">AI Costs</p>
-              <p className="text-lg font-medium">${today.aiCost.toFixed(2)}</p>
+        {today && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Today's Breakdown</CardTitle>
+              <CardDescription>Where today's dollars went.</CardDescription>
+            </CardHeader>
+            <div className="px-5 pb-5 space-y-3">
+              {[
+                { label: "AI", value: aiTotal, tone: "brand" as const },
+                { label: "API", value: apiTotal, tone: "info" as const },
+                { label: "Listing fees", value: feesTotal, tone: "warning" as const },
+              ].map((row) => (
+                <div key={row.label}>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="text-fg-muted font-medium">{row.label}</span>
+                    <span className="tabular-nums text-fg">${row.value.toFixed(2)}</span>
+                  </div>
+                  <Progress value={row.value} max={breakdownTotal} tone={row.tone} size="xs" />
+                </div>
+              ))}
             </div>
+          </Card>
+        )}
+      </div>
+
+      {/* 30-day trend bar chart */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs text-gray-400">API Costs</p>
-              <p className="text-lg font-medium">${today.apiCost.toFixed(2)}</p>
+              <CardTitle>30-Day Trend</CardTitle>
+              <CardDescription>Daily total cost</CardDescription>
             </div>
-            <div>
-              <p className="text-xs text-gray-400">Listing Fees</p>
-              <p className="text-lg font-medium">${today.listingFees.toFixed(2)}</p>
-            </div>
+            <Sparkline data={costSpark} width={160} height={40} />
+          </div>
+        </CardHeader>
+        <div className="px-5 pb-5">
+          <div className="flex items-end gap-0.5 h-24">
+            {ordered.map((d) => {
+              const pct = (d.totalCost / maxCost) * 100;
+              const isToday = d.date === today?.date;
+              return (
+                <div
+                  key={d.date}
+                  className="flex-1 flex flex-col justify-end group relative"
+                  title={`${d.date}: $${d.totalCost.toFixed(2)}`}
+                >
+                  <div
+                    className={`w-full rounded-t transition-all ${
+                      isToday ? "bg-brand" : "bg-brand/40 group-hover:bg-brand/70"
+                    }`}
+                    style={{ height: `${Math.max(pct, 2)}%` }}
+                  />
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex justify-between text-[10px] text-fg-faint mt-1.5 tabular-nums">
+            <span>{ordered[0]?.date}</span>
+            <span>{ordered[ordered.length - 1]?.date}</span>
           </div>
         </div>
-      )}
+      </Card>
 
       {/* Daily history */}
-      <div className="bg-white rounded-lg border overflow-hidden mb-6">
-        <h2 className="font-medium p-4 border-b text-sm text-gray-500">Daily Cost History</h2>
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 border-b">
-            <tr>
-              <th className="text-left px-4 py-2 font-medium text-gray-500">Date</th>
-              <th className="text-left px-4 py-2 font-medium text-gray-500">Total</th>
-              <th className="text-left px-4 py-2 font-medium text-gray-500">AI</th>
-              <th className="text-left px-4 py-2 font-medium text-gray-500">API</th>
-              <th className="text-left px-4 py-2 font-medium text-gray-500">Fees</th>
-              <th className="text-left px-4 py-2 font-medium text-gray-500">Listings</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {data.dailyCosts.map((day) => (
-              <tr key={day.date} className="hover:bg-gray-50">
-                <td className="px-4 py-2">{day.date}</td>
-                <td className="px-4 py-2 font-medium">${day.totalCost.toFixed(2)}</td>
-                <td className="px-4 py-2 text-gray-500">${day.aiCost.toFixed(2)}</td>
-                <td className="px-4 py-2 text-gray-500">${day.apiCost.toFixed(2)}</td>
-                <td className="px-4 py-2 text-gray-500">${day.listingFees.toFixed(2)}</td>
-                <td className="px-4 py-2 text-gray-500">{day.listingsCreated}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Token usage */}
-      {data.recentTokenUsage.length > 0 && (
-        <div className="bg-white rounded-lg border overflow-hidden">
-          <h2 className="font-medium p-4 border-b text-sm text-gray-500">Recent Token Usage</h2>
+      <Card>
+        <CardHeader>
+          <CardTitle>Daily Cost History</CardTitle>
+          <CardDescription>Per-day breakdown for the last 30 days.</CardDescription>
+        </CardHeader>
+        <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b">
-              <tr>
-                <th className="text-left px-4 py-2 font-medium text-gray-500">Model</th>
-                <th className="text-left px-4 py-2 font-medium text-gray-500">Operation</th>
-                <th className="text-left px-4 py-2 font-medium text-gray-500">Tokens</th>
-                <th className="text-left px-4 py-2 font-medium text-gray-500">Cost</th>
-                <th className="text-left px-4 py-2 font-medium text-gray-500">Time</th>
+            <thead className="bg-surface-2 border-y border-border">
+              <tr className="text-left">
+                <th className="px-5 py-2.5 font-medium text-xs uppercase tracking-wide text-fg-subtle">Date</th>
+                <th className="px-5 py-2.5 font-medium text-xs uppercase tracking-wide text-fg-subtle tabular-nums">Total</th>
+                <th className="px-5 py-2.5 font-medium text-xs uppercase tracking-wide text-fg-subtle tabular-nums">AI</th>
+                <th className="px-5 py-2.5 font-medium text-xs uppercase tracking-wide text-fg-subtle tabular-nums">API</th>
+                <th className="px-5 py-2.5 font-medium text-xs uppercase tracking-wide text-fg-subtle tabular-nums">Fees</th>
+                <th className="px-5 py-2.5 font-medium text-xs uppercase tracking-wide text-fg-subtle tabular-nums">Listings</th>
               </tr>
             </thead>
-            <tbody className="divide-y">
-              {data.recentTokenUsage.slice(0, 20).map((usage) => (
-                <tr key={usage.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-2 font-mono text-xs">{usage.modelName}</td>
-                  <td className="px-4 py-2 text-gray-500">{usage.operation}</td>
-                  <td className="px-4 py-2 text-gray-500">{usage.totalTokens.toLocaleString()}</td>
-                  <td className="px-4 py-2">${usage.estimatedCost.toFixed(4)}</td>
-                  <td className="px-4 py-2 text-gray-400 text-xs">{new Date(usage.createdAt).toLocaleTimeString()}</td>
+            <tbody className="divide-y divide-border">
+              {data.dailyCosts.map((day) => (
+                <tr key={day.date} className="hover:bg-surface-hover transition-colors">
+                  <td className="px-5 py-2.5 text-fg">{day.date}</td>
+                  <td className="px-5 py-2.5 font-semibold text-fg tabular-nums">${day.totalCost.toFixed(2)}</td>
+                  <td className="px-5 py-2.5 text-fg-muted tabular-nums">${day.aiCost.toFixed(2)}</td>
+                  <td className="px-5 py-2.5 text-fg-muted tabular-nums">${day.apiCost.toFixed(2)}</td>
+                  <td className="px-5 py-2.5 text-fg-muted tabular-nums">${day.listingFees.toFixed(2)}</td>
+                  <td className="px-5 py-2.5 text-fg-muted tabular-nums">{day.listingsCreated}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+      </Card>
+
+      {/* Token usage */}
+      {data.recentTokenUsage.length > 0 && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <Cpu className="h-4 w-4 text-fg-subtle" />
+              <div>
+                <CardTitle>Recent Token Usage</CardTitle>
+                <CardDescription>Last 20 model calls</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-surface-2 border-y border-border">
+                <tr className="text-left">
+                  <th className="px-5 py-2.5 font-medium text-xs uppercase tracking-wide text-fg-subtle">Model</th>
+                  <th className="px-5 py-2.5 font-medium text-xs uppercase tracking-wide text-fg-subtle">Operation</th>
+                  <th className="px-5 py-2.5 font-medium text-xs uppercase tracking-wide text-fg-subtle tabular-nums">Tokens</th>
+                  <th className="px-5 py-2.5 font-medium text-xs uppercase tracking-wide text-fg-subtle tabular-nums">Cost</th>
+                  <th className="px-5 py-2.5 font-medium text-xs uppercase tracking-wide text-fg-subtle tabular-nums">Time</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {data.recentTokenUsage.slice(0, 20).map((usage) => (
+                  <tr key={usage.id} className="hover:bg-surface-hover transition-colors">
+                    <td className="px-5 py-2.5 font-mono text-xs text-fg">{usage.modelName}</td>
+                    <td className="px-5 py-2.5 text-fg-muted">
+                      <span className="inline-flex items-center gap-1">
+                        <Activity className="h-3 w-3 text-fg-faint" />
+                        {usage.operation}
+                      </span>
+                    </td>
+                    <td className="px-5 py-2.5 text-fg-muted tabular-nums">{usage.totalTokens.toLocaleString()}</td>
+                    <td className="px-5 py-2.5 text-fg font-medium tabular-nums">${usage.estimatedCost.toFixed(4)}</td>
+                    <td className="px-5 py-2.5 text-fg-faint text-xs tabular-nums">{new Date(usage.createdAt).toLocaleTimeString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       )}
     </div>
   );

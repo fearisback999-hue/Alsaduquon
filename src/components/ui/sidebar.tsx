@@ -2,18 +2,40 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import {
+  LayoutDashboard,
+  Workflow,
+  Hash,
+  Sparkles,
+  CheckSquare,
+  ListChecks,
+  ShoppingBag,
+  Wallet,
+  Settings,
+  LogOut,
+  Zap,
+} from "lucide-react";
+import { DualProgress } from "./progress";
 
-const NAV_ITEMS = [
-  { href: "/dashboard", label: "Overview", icon: "~" },
-  { href: "/dashboard/pipeline", label: "Pipeline", icon: ">" },
-  { href: "/dashboard/niches", label: "Niches", icon: "#" },
-  { href: "/dashboard/designs", label: "Designs", icon: "*" },
-  { href: "/dashboard/approvals", label: "Approvals", icon: "!" },
-  { href: "/dashboard/listings", label: "Listings", icon: "=" },
-  { href: "/dashboard/orders", label: "Orders", icon: "$" },
-  { href: "/dashboard/costs", label: "Costs", icon: "%" },
-  { href: "/dashboard/settings", label: "Settings", icon: "@" },
+interface NavItem {
+  href: string;
+  label: string;
+  icon: ReactNode;
+}
+
+const ICON_PROPS = { size: 16, strokeWidth: 1.75 } as const;
+
+const NAV_ITEMS: NavItem[] = [
+  { href: "/dashboard", label: "Overview", icon: <LayoutDashboard {...ICON_PROPS} /> },
+  { href: "/dashboard/pipeline", label: "Pipeline", icon: <Workflow {...ICON_PROPS} /> },
+  { href: "/dashboard/niches", label: "Niches", icon: <Hash {...ICON_PROPS} /> },
+  { href: "/dashboard/designs", label: "Designs", icon: <Sparkles {...ICON_PROPS} /> },
+  { href: "/dashboard/approvals", label: "Approvals", icon: <CheckSquare {...ICON_PROPS} /> },
+  { href: "/dashboard/listings", label: "Listings", icon: <ListChecks {...ICON_PROPS} /> },
+  { href: "/dashboard/orders", label: "Orders", icon: <ShoppingBag {...ICON_PROPS} /> },
+  { href: "/dashboard/costs", label: "Costs", icon: <Wallet {...ICON_PROPS} /> },
+  { href: "/dashboard/settings", label: "Settings", icon: <Settings {...ICON_PROPS} /> },
 ];
 
 interface BudgetState {
@@ -67,65 +89,70 @@ export function Sidebar() {
     }
   }
 
-  const costPct = budget ? Math.min(100, (budget.totalCost / budget.maxDailyCost) * 100) : 0;
-  const listingsPct = budget ? Math.min(100, (budget.listingsCreated / budget.maxDailyListings) * 100) : 0;
-  const costBarColor = costPct >= 90 ? "bg-red-500" : costPct >= 70 ? "bg-yellow-500" : "bg-green-500";
-  const listingsBarColor = listingsPct >= 90 ? "bg-red-500" : "bg-blue-500";
-
   return (
-    <aside className="w-56 bg-gray-900 text-white min-h-screen flex flex-col">
-      <div className="p-4 border-b border-gray-800">
-        <h1 className="text-lg font-bold">NeoPOD</h1>
-        <p className="text-xs text-gray-400">Automation Engine</p>
+    <aside className="w-60 bg-surface border-r border-border min-h-screen flex flex-col sticky top-0">
+      {/* Brand */}
+      <div className="px-5 pt-5 pb-4">
+        <Link href="/dashboard" className="flex items-center gap-2.5 group">
+          <div className="h-8 w-8 rounded-lg bg-brand flex items-center justify-center shadow-glow transition-transform group-hover:scale-105">
+            <Zap className="h-4 w-4 text-brand-fg" strokeWidth={2.5} fill="currentColor" />
+          </div>
+          <div>
+            <div className="text-sm font-bold tracking-tight text-fg">NeoPOD</div>
+            <div className="text-[10px] uppercase tracking-wider text-fg-faint font-medium">Automation Engine</div>
+          </div>
+        </Link>
       </div>
 
+      {/* Budget widget */}
       {budget && (
-        <div className="p-4 border-b border-gray-800 space-y-3">
-          <div>
-            <div className="flex justify-between text-xs text-gray-400 mb-1">
-              <span>Today&apos;s spend</span>
-              <span>${budget.totalCost.toFixed(2)} / ${budget.maxDailyCost.toFixed(2)}</span>
-            </div>
-            <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-              <div className={`h-full ${costBarColor} transition-all`} style={{ width: `${costPct}%` }} />
-            </div>
-          </div>
-          <div>
-            <div className="flex justify-between text-xs text-gray-400 mb-1">
-              <span>Listings today</span>
-              <span>{budget.listingsCreated} / {budget.maxDailyListings}</span>
-            </div>
-            <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-              <div className={`h-full ${listingsBarColor} transition-all`} style={{ width: `${listingsPct}%` }} />
-            </div>
-          </div>
+        <div className="mx-3 mb-3 rounded-xl border border-border bg-surface-2 p-3 space-y-3">
+          <DualProgress
+            label="Spend today"
+            current={budget.totalCost}
+            max={budget.maxDailyCost}
+            formatter={(v) => `$${v.toFixed(2)}`}
+          />
+          <DualProgress
+            label="Listings"
+            current={budget.listingsCreated}
+            max={budget.maxDailyListings}
+          />
         </div>
       )}
 
-      <nav className="flex-1 py-4">
+      {/* Nav */}
+      <nav className="flex-1 px-3 py-2 space-y-0.5">
         {NAV_ITEMS.map((item) => {
           const active = pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href));
           return (
             <Link
               key={item.href}
               href={item.href}
-              className={`flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${
-                active ? "bg-blue-600 text-white" : "text-gray-300 hover:bg-gray-800 hover:text-white"
+              className={`relative flex items-center gap-2.5 px-3 py-2 text-sm rounded-lg transition-all duration-150 ${
+                active
+                  ? "bg-brand-subtle text-brand font-medium"
+                  : "text-fg-muted hover:bg-surface-hover hover:text-fg"
               }`}
             >
-              <span className="w-5 text-center font-mono">{item.icon}</span>
-              {item.label}
+              {active && (
+                <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-brand" aria-hidden />
+              )}
+              <span className={active ? "text-brand" : "text-fg-subtle"}>{item.icon}</span>
+              <span>{item.label}</span>
             </Link>
           );
         })}
       </nav>
 
-      <div className="p-4 border-t border-gray-800">
+      {/* Footer */}
+      <div className="p-3 border-t border-border">
         <button
           onClick={handleLogout}
           disabled={loggingOut}
-          className="w-full px-3 py-2 text-sm text-gray-300 hover:bg-gray-800 hover:text-white rounded-md transition-colors disabled:opacity-50"
+          className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-fg-muted hover:bg-surface-hover hover:text-fg rounded-lg transition-colors disabled:opacity-50"
         >
+          <LogOut size={16} strokeWidth={1.75} />
           {loggingOut ? "Signing out…" : "Sign out"}
         </button>
       </div>

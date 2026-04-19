@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { CheckCircle2, AlertCircle, Info, X } from "lucide-react";
 
 type ToastLevel = "success" | "error" | "info";
 
@@ -20,8 +21,30 @@ const ToastContext = createContext<ToastApi | null>(null);
 
 const TOAST_DURATION_MS = 4000;
 
+const LEVEL_STYLES: Record<ToastLevel, { ring: string; icon: React.ReactNode; iconColor: string }> = {
+  success: {
+    ring: "ring-success/30",
+    iconColor: "text-success",
+    icon: <CheckCircle2 className="h-4 w-4" strokeWidth={2.25} />,
+  },
+  error: {
+    ring: "ring-danger/30",
+    iconColor: "text-danger",
+    icon: <AlertCircle className="h-4 w-4" strokeWidth={2.25} />,
+  },
+  info: {
+    ring: "ring-info/30",
+    iconColor: "text-info",
+    icon: <Info className="h-4 w-4" strokeWidth={2.25} />,
+  },
+};
+
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+
+  const dismiss = useCallback((id: number) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
 
   const push = useCallback((level: ToastLevel, message: string) => {
     const id = Date.now() + Math.random();
@@ -40,22 +63,31 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={api}>
       {children}
-      <div className="fixed bottom-4 right-4 flex flex-col gap-2 z-50 pointer-events-none">
-        {toasts.map((t) => (
-          <div
-            key={t.id}
-            role="status"
-            className={`px-4 py-2.5 rounded-md shadow-lg text-sm pointer-events-auto max-w-sm ${
-              t.level === "success"
-                ? "bg-green-600 text-white"
-                : t.level === "error"
-                ? "bg-red-600 text-white"
-                : "bg-gray-800 text-white"
-            }`}
-          >
-            {t.message}
-          </div>
-        ))}
+      <div
+        aria-live="polite"
+        aria-atomic="true"
+        className="fixed bottom-4 right-4 flex flex-col gap-2 z-50 pointer-events-none"
+      >
+        {toasts.map((t) => {
+          const style = LEVEL_STYLES[t.level];
+          return (
+            <div
+              key={t.id}
+              role="status"
+              className={`glass flex items-start gap-3 px-4 py-3 rounded-xl shadow-lg ring-1 ${style.ring} text-sm text-fg pointer-events-auto max-w-sm animate-slide-in-right`}
+            >
+              <span className={`mt-0.5 flex-shrink-0 ${style.iconColor}`}>{style.icon}</span>
+              <p className="flex-1 leading-snug">{t.message}</p>
+              <button
+                onClick={() => dismiss(t.id)}
+                className="text-fg-faint hover:text-fg transition-colors flex-shrink-0"
+                aria-label="Dismiss notification"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          );
+        })}
       </div>
     </ToastContext.Provider>
   );
