@@ -1,7 +1,10 @@
 import { Sidebar } from "@/components/ui/sidebar";
 import { ToastProvider } from "@/components/ui/toast";
+import { requireSession } from "@/lib/auth/require-session";
 
-export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
+  await requireSession();
+
   return (
     <ToastProvider>
       <div className="flex min-h-screen bg-bg">

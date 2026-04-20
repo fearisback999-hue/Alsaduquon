@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isValidSession } from "@/lib/auth/sessions";
 
 const CSP_DIRECTIVES = [
   "default-src 'self'",
@@ -25,12 +24,17 @@ function addSecurityHeaders(response: NextResponse): NextResponse {
   return response;
 }
 
-export async function middleware(request: NextRequest) {
+// Tokens are 64 hex chars (32 random bytes). Reject obviously malformed cookies
+// without hitting the database. Full DB-backed validation happens in the
+// dashboard layout and API routes (Node runtime), where libsql works with
+// file:// URLs.
+function looksLikeValidToken(token: string | undefined): boolean {
+  return !!token && /^[0-9a-f]{32,128}$/i.test(token);
+}
+
+export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Cron routes require CRON_SECRET AND (in production) the x-vercel-cron header
-  // that Vercel injects. This prevents an attacker with the secret from triggering
-  // cron jobs externally.
   if (pathname.startsWith("/api/cron/")) {
     const cronSecret = request.headers.get("authorization")?.replace("Bearer ", "");
     const fromVercelCron = request.headers.get("x-vercel-cron") === "1";
@@ -45,22 +49,17 @@ export async function middleware(request: NextRequest) {
     return addSecurityHeaders(NextResponse.next());
   }
 
-  // Health check is public
   if (pathname === "/api/health") {
     return addSecurityHeaders(NextResponse.next());
   }
 
-  // Login, logout, and login page are public
   if (pathname === "/login" || pathname === "/api/auth/login" || pathname === "/api/auth/logout") {
     return addSecurityHeaders(NextResponse.next());
   }
 
-  // All other /dashboard and /api routes require auth
   if (pathname.startsWith("/dashboard") || pathname.startsWith("/api/")) {
     const authCookie = request.cookies.get("neo-pod-auth")?.value;
-    const isValid = authCookie ? await isValidSession(authCookie) : false;
-
-    if (!isValid) {
+    if (!looksLikeValidToken(authCookie)) {
       if (pathname.startsWith("/api/")) {
         return addSecurityHeaders(
           NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
