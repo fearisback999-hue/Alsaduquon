@@ -1,5 +1,3 @@
-"use client";
-
 import { Sidebar } from "@/components/ui/sidebar";
 import { ToastProvider } from "@/components/ui/toast";
 
