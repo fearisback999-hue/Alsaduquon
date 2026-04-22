@@ -65,6 +65,16 @@ export const ImageQualitySchema = z.object({
 });
 export type ImageQuality = z.infer<typeof ImageQualitySchema>;
 
+// step-01-research.ts — AI keyword expansion for niche discovery
+const ExpandedNicheSchema = z.object({
+  keyword: z.string(),
+  reasoning: z.string(),
+});
+export const NicheExpansionSchema = z.object({
+  expanded_niches: z.array(ExpandedNicheSchema),
+});
+export type NicheExpansion = z.infer<typeof NicheExpansionSchema>;
+
 // lib/etsy/seo.ts — generateListingTags
 // Wrapped in an envelope object: OpenAI strict mode requires an object root.
 export const ListingTagsSchema = z.object({

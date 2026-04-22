@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Hash, TrendingUp, TrendingDown, Minus, Search, Filter, BarChart3 } from "lucide-react";
+import { Hash, TrendingUp, TrendingDown, Minus, Search, Filter, BarChart3, Plus } from "lucide-react";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
+import { useToast } from "@/components/ui/toast";
 
 interface Niche {
   id: string;
@@ -73,6 +74,10 @@ export default function NichesPage() {
   const [statusFilter, setStatusFilter] = useState("");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newNicheName, setNewNicheName] = useState("");
+  const [adding, setAdding] = useState(false);
+  const toast = useToast();
 
   async function loadData() {
     setLoading(true);
@@ -87,6 +92,36 @@ export default function NichesPage() {
   }
 
   useEffect(() => { loadData(); }, [statusFilter]);
+
+  async function handleAddNiche(e: React.FormEvent) {
+    e.preventDefault();
+    const name = newNicheName.trim();
+    if (!name || name.length < 2) return;
+
+    setAdding(true);
+    try {
+      const res = await fetch("/api/niches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      if (res.status === 409) {
+        toast.error("A niche with this name already exists");
+      } else if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error || "Failed to add niche");
+      } else {
+        toast.success(`Added "${name}" — it will be scored on the next pipeline run`);
+        setNewNicheName("");
+        setShowAddForm(false);
+        loadData();
+      }
+    } catch {
+      toast.error("Network error — try again");
+    } finally {
+      setAdding(false);
+    }
+  }
 
   const filtered = search
     ? niches.filter((n) => n.name.toLowerCase().includes(search.toLowerCase()))
@@ -110,7 +145,42 @@ export default function NichesPage() {
             )}
           </p>
         </div>
+        <button
+          onClick={() => setShowAddForm(!showAddForm)}
+          className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-brand text-brand-fg rounded-lg hover:bg-brand-hover transition-colors"
+        >
+          <Plus className="h-4 w-4" />
+          Add niche
+        </button>
       </div>
+
+      {showAddForm && (
+        <form onSubmit={handleAddNiche} className="flex items-center gap-2">
+          <input
+            type="text"
+            value={newNicheName}
+            onChange={(e) => setNewNicheName(e.target.value)}
+            placeholder="e.g. funny cat dad, retired nurse humor"
+            className="flex-1 h-9 px-3 bg-surface border border-border rounded-lg text-sm text-fg placeholder:text-fg-faint focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/20 transition-all"
+            maxLength={120}
+            autoFocus
+          />
+          <button
+            type="submit"
+            disabled={adding || newNicheName.trim().length < 2}
+            className="h-9 px-4 text-sm font-medium bg-brand text-brand-fg rounded-lg hover:bg-brand-hover transition-colors disabled:opacity-50"
+          >
+            {adding ? "Adding…" : "Add"}
+          </button>
+          <button
+            type="button"
+            onClick={() => { setShowAddForm(false); setNewNicheName(""); }}
+            className="h-9 px-3 text-sm text-fg-muted hover:text-fg rounded-lg hover:bg-surface-hover transition-colors"
+          >
+            Cancel
+          </button>
+        </form>
+      )}
 
       {/* Filter & search */}
       <div className="flex items-center justify-between gap-3 flex-wrap">

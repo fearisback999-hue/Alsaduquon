@@ -1,19 +1,23 @@
 import { ExternalAPIError } from "@/lib/errors";
 import { withRetry } from "@/lib/retry";
 import { rateLimit } from "./rate-limiter";
+import { log } from "@/lib/logger";
 
 export interface TrendResult {
   keyword: string;
   searchVolume: number;
   competition: number; // 0-1
   trendDirection: string; // up, down, stable
-  source: "podcs" | "flying_research" | "etsy_trends";
+  source: "podcs" | "flying_research" | "etsy_trends" | "ai_expansion";
 }
 
 // PodCS API
 export async function getPodCSTrends(category?: string): Promise<TrendResult[]> {
   const apiKey = process.env.PODCS_API_KEY;
-  if (!apiKey) return [];
+  if (!apiKey) {
+    log("warn", "[Step 01] PODCS_API_KEY not set — skipping PodCS trend source");
+    return [];
+  }
 
   await rateLimit("podcs");
 
@@ -35,15 +39,21 @@ export async function getPodCSTrends(category?: string): Promise<TrendResult[]> 
       trendDirection: item.trend ?? "stable",
       source: "podcs" as const,
     }));
-  } catch {
+  } catch (error) {
+    log("error", "[Step 01] PodCS API failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return [];
   }
 }
 
-// FlyingResearch API
+// FlyingResearch API — used for volume enrichment
 export async function getFlyingResearchVolume(keywords: string[]): Promise<TrendResult[]> {
   const apiKey = process.env.FLYING_RESEARCH_API_KEY;
-  if (!apiKey) return [];
+  if (!apiKey) {
+    log("warn", "[Step 01] FLYING_RESEARCH_API_KEY not set — skipping volume enrichment");
+    return [];
+  }
 
   await rateLimit("flying_research");
 
@@ -69,47 +79,87 @@ export async function getFlyingResearchVolume(keywords: string[]): Promise<Trend
       trendDirection: item.trend ?? "stable",
       source: "flying_research" as const,
     }));
-  } catch {
+  } catch (error) {
+    log("error", "[Step 01] FlyingResearch API failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return [];
   }
 }
 
-// Etsy search trends (scrapes Etsy's trending searches)
-export async function getEtsyTrends(): Promise<TrendResult[]> {
+// AI-powered keyword expansion — turns broad trend keywords into specific,
+// sellable POD niche phrases that people actually search for on Etsy
+export async function expandNichesWithAI(
+  seedKeywords: string[],
+  pipelineRunId?: string,
+): Promise<TrendResult[]> {
+  if (seedKeywords.length === 0) return [];
+
+  const { chatCompletion } = await import("@/lib/ai/client");
+  const { NicheExpansionSchema } = await import("@/lib/ai/schemas");
+  const { trackTextUsage } = await import("@/lib/ai/token-tracker");
+  const { sanitizeForPrompt } = await import("@/lib/ai/sanitize");
+
+  const safeKeywords = seedKeywords.slice(0, 15).map((k) => sanitizeForPrompt(k));
+
+  const prompt = `You are an Etsy POD (print-on-demand) niche research expert. Given these trending keywords from market research, generate 3-5 specific, sellable print-on-demand niche ideas per keyword.
+
+TRENDING KEYWORDS:
+${safeKeywords.map((k, i) => `${i + 1}. ${k}`).join("\n")}
+
+RULES:
+- Each expanded niche should be a specific, long-tail phrase (2-5 words) someone would search on Etsy for t-shirts, mugs, hoodies, or posters
+- Target specific audiences: "dog mom", "retired nurse", "gamer dad", "plant lady"
+- Include emotional hooks: funny, sarcastic, motivational, vintage, retro
+- Focus on gift-worthy phrases: birthday, mother's day, occupation pride
+- Avoid generic single words — be specific enough to design for
+- Don't repeat the seed keyword as-is
+- Aim for underserved micro-niches, not oversaturated ones like "funny cat"
+
+Return your expanded niches as JSON.`;
+
   try {
-    // Use Etsy's public API for trending items
-    const response = await withRetry(async () => {
-      const res = await fetch("https://openapi.etsy.com/v3/application/buyer-taxonomy/nodes", {
-        headers: { "x-api-key": process.env.ETSY_CLIENT_ID! },
-      });
-      if (!res.ok) throw new ExternalAPIError("Etsy", res.status, await res.text());
-      return res.json();
+    const result = await chatCompletion(prompt, {
+      systemPrompt:
+        "You are a POD market researcher specializing in Etsy. Generate specific, commercially viable niche keywords that real buyers search for. Be creative but realistic.",
+      schema: NicheExpansionSchema,
+      schemaName: "niche_expansion",
+      maxTokens: 1500,
+      temperature: 0.85,
     });
 
-    const data = response as { results: Array<{ name: string; id: number }> };
-    return data.results.slice(0, 20).map((item) => ({
-      keyword: item.name.toLowerCase(),
-      searchVolume: 0, // Not available from this endpoint
+    await trackTextUsage({
+      model: result.model,
+      operation: "niche_expansion",
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
+      pipelineRunId,
+    });
+
+    const expanded = result.parsed!.expanded_niches;
+    log("info", `[Step 01] AI expanded ${safeKeywords.length} seeds into ${expanded.length} niche candidates`);
+
+    return expanded.map((n) => ({
+      keyword: n.keyword,
+      searchVolume: 0,
       competition: 0.5,
-      trendDirection: "stable",
-      source: "etsy_trends" as const,
+      trendDirection: "growing",
+      source: "ai_expansion" as const,
     }));
-  } catch {
+  } catch (error) {
+    log("error", "[Step 01] AI niche expansion failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return [];
   }
 }
 
 export async function getAllTrends(): Promise<TrendResult[]> {
-  const [podcs, etsy] = await Promise.all([
-    getPodCSTrends(),
-    getEtsyTrends(),
-  ]);
-
-  const all = [...podcs, ...etsy];
+  const podcs = await getPodCSTrends();
 
   // Deduplicate by keyword (case-insensitive)
   const seen = new Map<string, TrendResult>();
-  for (const item of all) {
+  for (const item of podcs) {
     const key = item.keyword.toLowerCase().trim();
     const existing = seen.get(key);
     if (!existing || item.searchVolume > existing.searchVolume) {
