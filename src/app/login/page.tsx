@@ -2,37 +2,56 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Zap, Lock, ArrowRight, AlertCircle } from "lucide-react";
+import { Zap, Lock, ArrowRight, AlertCircle, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [rateLimited, setRateLimited] = useState(false);
   const router = useRouter();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!password.trim()) {
+      setError("Please enter a password.");
+      return;
+    }
     setLoading(true);
     setError("");
+    setRateLimited(false);
 
-    const res = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password }),
-    });
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
 
-    if (res.ok) {
-      router.push("/dashboard");
-    } else {
-      setError("Invalid password. Please try again.");
+      if (res.ok) {
+        router.push("/dashboard");
+      } else if (res.status === 429) {
+        setRateLimited(true);
+        setError("Too many failed attempts. Please wait 15 minutes.");
+        setLoading(false);
+      } else {
+        setError("Invalid password. Please try again.");
+        setLoading(false);
+      }
+    } catch {
+      setError("Network error. Please check your connection.");
       setLoading(false);
     }
   }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-bg aurora-bg relative overflow-hidden p-4">
-      <div className="absolute inset-0 grid-pattern opacity-30 pointer-events-none" aria-hidden />
+      <div className="absolute inset-0 grid-pattern opacity-30 pointer-events-none" aria-hidden="true" />
+
+      {/* Decorative orbs */}
+      <div className="absolute top-1/4 left-1/4 w-64 h-64 bg-brand/5 rounded-full blur-3xl pointer-events-none animate-float" aria-hidden="true" />
+      <div className="absolute bottom-1/4 right-1/4 w-48 h-48 bg-info/5 rounded-full blur-3xl pointer-events-none animate-float" style={{ animationDelay: "1.5s" }} aria-hidden="true" />
 
       <div className="w-full max-w-md relative">
         {/* Brand header */}
@@ -72,6 +91,7 @@ export default function LoginPage() {
                   className="w-full h-11 pl-10 pr-4 bg-surface border border-border rounded-lg text-sm text-fg placeholder:text-fg-faint focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/20 transition-all"
                   autoFocus
                   autoComplete="current-password"
+                  disabled={rateLimited}
                 />
               </div>
             </div>
@@ -79,9 +99,17 @@ export default function LoginPage() {
             {error && (
               <div
                 role="alert"
-                className="flex items-start gap-2 px-3 py-2.5 bg-danger-subtle text-danger rounded-lg text-sm"
+                className={`flex items-start gap-2 px-3 py-2.5 rounded-lg text-sm animate-scale-in ${
+                  rateLimited
+                    ? "bg-warning-subtle text-warning"
+                    : "bg-danger-subtle text-danger"
+                }`}
               >
-                <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" strokeWidth={2.25} />
+                {rateLimited ? (
+                  <ShieldAlert className="h-4 w-4 flex-shrink-0 mt-0.5" strokeWidth={2.25} />
+                ) : (
+                  <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" strokeWidth={2.25} />
+                )}
                 <span>{error}</span>
               </div>
             )}
@@ -91,6 +119,7 @@ export default function LoginPage() {
               loading={loading}
               size="lg"
               className="w-full"
+              disabled={rateLimited}
               rightIcon={!loading ? <ArrowRight className="h-4 w-4" /> : undefined}
             >
               {loading ? "Signing in…" : "Sign in"}
@@ -98,7 +127,10 @@ export default function LoginPage() {
           </form>
         </div>
 
-        <p className="text-xs text-fg-faint text-center mt-6">
+        <p
+          className="text-xs text-fg-faint text-center mt-6 animate-fade-in-up"
+          style={{ animationDelay: "160ms" }}
+        >
           Protected dashboard. Unauthorized access attempts are rate-limited.
         </p>
       </div>

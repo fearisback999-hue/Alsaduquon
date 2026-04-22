@@ -98,7 +98,7 @@ export default function NichesPage() {
 
   return (
     <div className="space-y-6 animate-fade-in-up">
-      <div className="flex items-end justify-between flex-wrap gap-3">
+      <div className="page-header flex items-end justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-fg tracking-tight">Niches</h1>
           <p className="text-sm text-fg-subtle mt-1">

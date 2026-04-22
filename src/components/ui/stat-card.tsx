@@ -17,8 +17,6 @@ interface StatCardProps {
     label: string;
   };
   sparkline?: number[];
-  /** Legacy prop kept for backwards compat with older callers */
-  color?: "blue" | "green" | "red" | "yellow" | "gray";
 }
 
 const toneIconBg: Record<StatTone, string> = {
@@ -39,12 +37,13 @@ const toneSparkColor: Record<StatTone, string> = {
   neutral: "rgb(var(--fg-subtle))",
 };
 
-const legacyColorMap: Record<NonNullable<StatCardProps["color"]>, StatTone> = {
-  blue: "info",
-  green: "success",
-  red: "danger",
-  yellow: "warning",
-  gray: "neutral",
+const toneAccent: Record<StatTone, string> = {
+  brand: "from-brand/5 to-transparent",
+  success: "from-success/5 to-transparent",
+  warning: "from-warning/5 to-transparent",
+  danger: "from-danger/5 to-transparent",
+  info: "from-info/5 to-transparent",
+  neutral: "from-surface-2/50 to-transparent",
 };
 
 const trendClasses: Record<TrendDirection, string> = {
@@ -59,16 +58,15 @@ const trendGlyph: Record<TrendDirection, string> = {
   flat: "→",
 };
 
-export function StatCard({ label, value, detail, tone, icon, trend, sparkline, color }: StatCardProps) {
-  const effectiveTone: StatTone = tone ?? (color ? legacyColorMap[color] : "neutral");
-
+export function StatCard({ label, value, detail, tone = "neutral", icon, trend, sparkline }: StatCardProps) {
   return (
     <div className="card card-hover p-5 relative overflow-hidden group">
-      <div className="flex items-start justify-between gap-4">
+      <div className={`absolute inset-0 bg-gradient-to-br ${toneAccent[tone]} pointer-events-none`} />
+      <div className="relative flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             {icon && (
-              <span className={`h-7 w-7 rounded-lg flex items-center justify-center flex-shrink-0 ${toneIconBg[effectiveTone]}`}>
+              <span className={`h-7 w-7 rounded-lg flex items-center justify-center flex-shrink-0 ${toneIconBg[tone]}`}>
                 {icon}
               </span>
             )}
@@ -85,8 +83,8 @@ export function StatCard({ label, value, detail, tone, icon, trend, sparkline, c
           </div>
         </div>
         {sparkline && sparkline.length > 0 && (
-          <div className="flex-shrink-0 opacity-80 group-hover:opacity-100 transition-opacity">
-            <Sparkline data={sparkline} color={toneSparkColor[effectiveTone]} width={80} height={32} />
+          <div className="flex-shrink-0 opacity-80 group-hover:opacity-100 transition-opacity duration-200">
+            <Sparkline data={sparkline} color={toneSparkColor[tone]} width={80} height={32} />
           </div>
         )}
       </div>

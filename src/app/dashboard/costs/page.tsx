@@ -77,13 +77,13 @@ export default function CostsPage() {
 
   return (
     <div className="space-y-6 animate-fade-in-up">
-      <div>
+      <div className="page-header">
         <h1 className="text-2xl font-bold text-fg tracking-tight">Cost Tracking</h1>
         <p className="text-sm text-fg-subtle mt-1">AI, API, and listing fee spend across the last 30 days.</p>
       </div>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <StatCard
           label="Today's Spend"
           value={`$${(today?.totalCost ?? 0).toFixed(2)}`}

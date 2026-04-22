@@ -54,7 +54,7 @@ export default async function DashboardPage() {
   return (
     <div className="space-y-6 animate-fade-in-up">
       {/* Page header */}
-      <div className="flex items-end justify-between gap-4 flex-wrap">
+      <div className="page-header flex items-end justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-fg tracking-tight">Overview</h1>
           <p className="text-sm text-fg-subtle mt-1">
@@ -71,7 +71,7 @@ export default async function DashboardPage() {
       </div>
 
       {/* Stat grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
         <StatCard
           label="Live Listings"
           value={liveListings?.count ?? 0}

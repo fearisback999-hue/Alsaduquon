@@ -154,7 +154,7 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-6 animate-fade-in-up max-w-5xl">
-      <div>
+      <div className="page-header">
         <h1 className="text-2xl font-bold text-fg tracking-tight">Settings</h1>
         <p className="text-sm text-fg-subtle mt-1">Configure budgets, throughput, and integrations.</p>
       </div>

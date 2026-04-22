@@ -38,7 +38,7 @@ export default function DesignsPage() {
     return (
       <div className="space-y-6">
         <Skeleton className="h-8 w-40" />
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
           {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
             <Skeleton key={i} className="aspect-[3/4] w-full" />
           ))}
@@ -49,7 +49,7 @@ export default function DesignsPage() {
 
   return (
     <div className="space-y-6 animate-fade-in-up">
-      <div>
+      <div className="page-header">
         <h1 className="text-2xl font-bold text-fg tracking-tight">Designs</h1>
         <p className="text-sm text-fg-subtle mt-1">
           {designs.length > 0
@@ -67,7 +67,7 @@ export default function DesignsPage() {
           />
         </Card>
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
           {designs.map((design, idx) => (
             <Card
               key={design.id}

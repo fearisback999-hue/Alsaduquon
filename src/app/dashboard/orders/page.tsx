@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { ShoppingBag, DollarSign, TrendingUp, Calendar } from "lucide-react";
+import { ShoppingBag, DollarSign, TrendingUp, Receipt } from "lucide-react";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { StatCard } from "@/components/ui/stat-card";
 import { Card } from "@/components/ui/card";
@@ -54,12 +54,12 @@ export default function OrdersPage() {
 
   return (
     <div className="space-y-6 animate-fade-in-up">
-      <div>
+      <div className="page-header">
         <h1 className="text-2xl font-bold text-fg tracking-tight">Orders</h1>
         <p className="text-sm text-fg-subtle mt-1">Every sale from your Etsy shop, synced hourly.</p>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <StatCard
           label="Total Orders"
           value={orders.length}
@@ -83,7 +83,7 @@ export default function OrdersPage() {
           label="Avg Order Value"
           value={`$${avgOrderValue.toFixed(2)}`}
           tone="info"
-          icon={<Calendar className="h-4 w-4" strokeWidth={2} />}
+          icon={<Receipt className="h-4 w-4" strokeWidth={2} />}
         />
       </div>
 

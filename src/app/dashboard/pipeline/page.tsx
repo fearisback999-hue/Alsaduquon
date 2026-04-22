@@ -161,7 +161,7 @@ export default function PipelinePage() {
   return (
     <div className="space-y-6 animate-fade-in-up">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="page-header flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-fg tracking-tight">Pipeline</h1>
           <p className="text-sm text-fg-subtle mt-1">10-step automation from niche discovery to listing.</p>
@@ -299,7 +299,7 @@ export default function PipelinePage() {
       )}
 
       {/* Recent runs */}
-      {data?.recentRuns && data.recentRuns.length > 1 && (
+      {data?.recentRuns && data.recentRuns.length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle>Recent runs</CardTitle>

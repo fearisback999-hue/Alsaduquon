@@ -90,7 +90,7 @@ export default function ApprovalsPage() {
 
   return (
     <div className="space-y-6 animate-fade-in-up">
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="page-header flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-fg tracking-tight">Approval Queue</h1>
           <p className="text-sm text-fg-subtle mt-1">
