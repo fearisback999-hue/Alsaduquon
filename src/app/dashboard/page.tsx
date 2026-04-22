@@ -5,7 +5,7 @@ import { eq, desc, sql, gte } from "drizzle-orm";
 import { StatCard } from "@/components/ui/stat-card";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { LinkButton } from "@/components/ui/link-button";
 import {
   Package,
   ShoppingBag,
@@ -62,11 +62,9 @@ export default async function DashboardPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Link href="/dashboard/pipeline">
-            <Button variant="primary" rightIcon={<ArrowRight className="h-4 w-4" />}>
-              View pipeline
-            </Button>
-          </Link>
+          <LinkButton href="/dashboard/pipeline" variant="primary" rightIcon={<ArrowRight className="h-4 w-4" />}>
+            View pipeline
+          </LinkButton>
         </div>
       </div>
 

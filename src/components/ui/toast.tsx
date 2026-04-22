@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { CheckCircle2, AlertCircle, Info, X } from "lucide-react";
 
 type ToastLevel = "success" | "error" | "info";
@@ -41,17 +41,34 @@ const LEVEL_STYLES: Record<ToastLevel, { ring: string; icon: React.ReactNode; ic
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const nextIdRef = useRef(1);
+  const timeoutsRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+
+  useEffect(() => {
+    const timeouts = timeoutsRef.current;
+    return () => {
+      timeouts.forEach((t) => clearTimeout(t));
+      timeouts.clear();
+    };
+  }, []);
 
   const dismiss = useCallback((id: number) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
+    const t = timeoutsRef.current.get(id);
+    if (t) {
+      clearTimeout(t);
+      timeoutsRef.current.delete(id);
+    }
+    setToasts((prev) => prev.filter((tt) => tt.id !== id));
   }, []);
 
   const push = useCallback((level: ToastLevel, message: string) => {
-    const id = Date.now() + Math.random();
+    const id = nextIdRef.current++;
     setToasts((prev) => [...prev, { id, level, message }]);
-    setTimeout(() => {
+    const timeout = setTimeout(() => {
+      timeoutsRef.current.delete(id);
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, TOAST_DURATION_MS);
+    timeoutsRef.current.set(id, timeout);
   }, []);
 
   const api: ToastApi = {

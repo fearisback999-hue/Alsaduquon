@@ -138,6 +138,16 @@ export default function PipelinePage() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // Auto-refresh every 3s while a run is active
+  useEffect(() => {
+    const status = data?.run?.status;
+    if (status !== "running" && status !== "paused") return;
+    const interval = setInterval(() => {
+      if (!document.hidden) loadData();
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [data?.run?.status, loadData]);
+
   const run = data?.run;
   const progressPct = run ? (run.currentStep / TOTAL_STEPS) * 100 : 0;
   const progressTone = run?.status === "failed" ? "bg-danger" : run?.status === "running" ? "bg-brand" : "bg-success";

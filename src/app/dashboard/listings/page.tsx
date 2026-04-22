@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { ListChecks, ExternalLink, AlertTriangle, Filter, TrendingUp } from "lucide-react";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorState } from "@/components/ui/error-state";
 import { getProductDisplayName } from "@/lib/printify/product-config";
+import { useApiData } from "@/lib/hooks/use-api-data";
 
 interface Listing {
   id: string;
@@ -33,27 +35,19 @@ const FILTERS = [
   { value: "rejected", label: "Rejected" },
 ];
 
+const LIMIT = 50;
+
 export default function ListingsPage() {
-  const [listings, setListings] = useState<Listing[]>([]);
   const [statusFilter, setStatusFilter] = useState("");
-  const [loading, setLoading] = useState(true);
+  const url = `/api/listings?${new URLSearchParams({
+    limit: String(LIMIT),
+    ...(statusFilter ? { status: statusFilter } : {}),
+  })}`;
+  const { data, loading, error, refetch } = useApiData<{ listings: Listing[] }>(url);
+  const listings = useMemo(() => data?.listings ?? [], [data]);
 
-  async function loadData() {
-    setLoading(true);
-    const params = new URLSearchParams({ limit: "50" });
-    if (statusFilter) params.set("status", statusFilter);
-    const res = await fetch(`/api/listings?${params}`);
-    if (res.ok) {
-      const data = await res.json();
-      setListings(data.listings ?? []);
-    }
-    setLoading(false);
-  }
-
-  useEffect(() => { loadData(); }, [statusFilter]);
-
-  const totalRevenue = listings.reduce((sum, l) => sum + l.finalPrice * (l.sales ?? 0), 0);
   const zombieCount = listings.filter((l) => (l.views ?? 0) > 100 && (l.sales ?? 0) === 0).length;
+  const truncated = listings.length >= LIMIT;
 
   return (
     <div className="space-y-6 animate-fade-in-up">
@@ -61,10 +55,7 @@ export default function ListingsPage() {
         <div>
           <h1 className="text-2xl font-bold text-fg tracking-tight">Listings</h1>
           <p className="text-sm text-fg-subtle mt-1">
-            {listings.length} listing{listings.length === 1 ? "" : "s"}
-            {totalRevenue > 0 && (
-              <> · <span className="text-fg font-medium tabular-nums">${totalRevenue.toFixed(2)}</span> gross</>
-            )}
+            {truncated ? `Showing ${listings.length} most recent` : `${listings.length} listing${listings.length === 1 ? "" : "s"}`}
             {zombieCount > 0 && (
               <> · <span className="text-danger font-medium">{zombieCount} zombie{zombieCount === 1 ? "" : "s"}</span></>
             )}
@@ -73,12 +64,13 @@ export default function ListingsPage() {
       </div>
 
       {/* Filter pills */}
-      <div className="flex items-center gap-1.5 flex-wrap">
-        <Filter className="h-3.5 w-3.5 text-fg-faint" />
+      <div className="flex items-center gap-1.5 flex-wrap" role="group" aria-label="Filter by status">
+        <Filter className="h-3.5 w-3.5 text-fg-faint" aria-hidden />
         {FILTERS.map((f) => (
           <button
             key={f.value}
             onClick={() => setStatusFilter(f.value)}
+            aria-pressed={statusFilter === f.value}
             className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
               statusFilter === f.value
                 ? "bg-brand text-brand-fg"
@@ -90,7 +82,9 @@ export default function ListingsPage() {
         ))}
       </div>
 
-      {loading ? (
+      {error ? (
+        <ErrorState message={error} onRetry={refetch} retrying={loading} />
+      ) : loading ? (
         <Skeleton className="h-64 w-full" />
       ) : listings.length === 0 ? (
         <Card>

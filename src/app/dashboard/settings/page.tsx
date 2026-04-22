@@ -66,6 +66,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [enabledProducts, setEnabledProducts] = useState<Set<string>>(new Set());
   const [savingProducts, setSavingProducts] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
   const productsByCategory = getProductsByCategory();
 
@@ -92,7 +93,31 @@ export default function SettingsPage() {
 
   useEffect(() => { loadData(); }, []);
 
+  const NUMERIC_MIN: Record<string, number> = {
+    max_daily_listings: 1,
+    max_daily_cost: 1,
+    concepts_per_niche: 1,
+    max_products_per_design: 1,
+    pipeline_runs_per_day: 1,
+  };
+
+  function validate(key: string, value: string): string | null {
+    const min = NUMERIC_MIN[key];
+    if (min !== undefined) {
+      const n = parseFloat(value);
+      if (isNaN(n)) return "Must be a number";
+      if (n < min) return `Must be at least ${min}`;
+    }
+    return null;
+  }
+
   async function saveSetting(key: string) {
+    const err = validate(key, editValues[key] ?? "");
+    if (err) {
+      setValidationErrors({ ...validationErrors, [key]: err });
+      return;
+    }
+    setValidationErrors({ ...validationErrors, [key]: "" });
     setSaving(key);
     await fetch("/api/settings", {
       method: "PUT",
@@ -279,11 +304,16 @@ export default function SettingsPage() {
           ].map((control) => {
             const currentValue = settings.find((s) => s.key === control.key)?.value;
             const dirty = editValues[control.key] !== currentValue;
+            const fieldError = validationErrors[control.key];
+            const inputId = `setting-${control.key}`;
             return (
               <div key={control.key} className="px-5 py-4 flex items-center gap-4 flex-wrap sm:flex-nowrap">
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-fg">{control.label}</p>
+                  <label htmlFor={inputId} className="text-sm font-medium text-fg cursor-pointer">{control.label}</label>
                   <p className="text-xs text-fg-subtle mt-0.5">{control.desc}</p>
+                  {fieldError && (
+                    <p className="text-xs text-danger mt-1">{fieldError}</p>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <div className="relative">
@@ -293,12 +323,23 @@ export default function SettingsPage() {
                       </span>
                     )}
                     <input
+                      id={inputId}
                       type="number"
                       min="1"
                       step={control.key === "max_daily_cost" ? "0.50" : "1"}
                       value={editValues[control.key] ?? ""}
-                      onChange={(e) => setEditValues({ ...editValues, [control.key]: e.target.value })}
-                      className={`w-24 h-9 ${control.prefix ? "pl-6" : "pl-3"} pr-3 bg-surface border border-border rounded-lg text-sm text-right tabular-nums text-fg focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/20 transition-all`}
+                      onChange={(e) => {
+                        setEditValues({ ...editValues, [control.key]: e.target.value });
+                        if (validationErrors[control.key]) {
+                          setValidationErrors({ ...validationErrors, [control.key]: "" });
+                        }
+                      }}
+                      aria-invalid={!!fieldError}
+                      className={`w-24 h-9 ${control.prefix ? "pl-6" : "pl-3"} pr-3 bg-surface border rounded-lg text-sm text-right tabular-nums text-fg focus:outline-none focus:ring-2 transition-all ${
+                        fieldError
+                          ? "border-danger focus:border-danger focus:ring-danger/20"
+                          : "border-border focus:border-brand focus:ring-brand/20"
+                      }`}
                     />
                   </div>
                   <span className="text-xs text-fg-faint w-20">{control.suffix}</span>

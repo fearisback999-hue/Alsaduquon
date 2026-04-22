@@ -93,7 +93,7 @@ function SidebarContent({
       )}
 
       {/* Nav */}
-      <nav className="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto">
+      <nav aria-label="Main navigation" className="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto">
         {NAV_ITEMS.map((item) => {
           const active = pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href));
           return (
@@ -172,7 +172,7 @@ export function Sidebar() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [pathname]);
+  }, []);
 
   useEffect(() => {
     if (mobileOpen) {
@@ -188,10 +188,15 @@ export function Sidebar() {
   async function handleLogout() {
     setLoggingOut(true);
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
-    } finally {
+      const res = await fetch("/api/auth/logout", { method: "POST" });
+      if (!res.ok) {
+        setLoggingOut(false);
+        return;
+      }
       router.push("/login");
       router.refresh();
+    } catch {
+      setLoggingOut(false);
     }
   }
 

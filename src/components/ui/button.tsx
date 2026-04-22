@@ -52,7 +52,13 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     .join(" ");
 
   return (
-    <button ref={ref} className={classes} disabled={disabled || loading} {...rest}>
+    <button
+      ref={ref}
+      className={classes}
+      disabled={disabled || loading}
+      aria-busy={loading || undefined}
+      {...rest}
+    >
       {loading ? (
         <svg
           className="animate-spin h-4 w-4"
