@@ -43,3 +43,4 @@ Thumbs.db
 
 # turbo
 .turbo
+tsconfig.tsbuildinfo
