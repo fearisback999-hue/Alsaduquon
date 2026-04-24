@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const result = await runPipeline({ startFromStep, dryRun });
+    const result = await runPipeline({ startFromStep, dryRun, existingRunId: lock.runId });
     return NextResponse.json(result);
   } catch (error) {
     const message = process.env.NODE_ENV === "production"

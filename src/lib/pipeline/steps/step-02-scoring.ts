@@ -82,7 +82,7 @@ Return JSON:
         schemaName: "niche_pre_research",
       });
 
-      await trackTextUsage({
+      totalCost += await trackTextUsage({
         model: preResearch.model,
         operation: "niche_pre_research",
         inputTokens: preResearch.inputTokens,
@@ -150,7 +150,7 @@ Return JSON only:
         schemaName: "niche_scoring",
       });
 
-      await trackTextUsage({
+      totalCost += await trackTextUsage({
         model: result.model,
         operation: "niche_scoring",
         inputTokens: result.inputTokens,

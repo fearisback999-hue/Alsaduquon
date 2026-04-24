@@ -13,6 +13,12 @@ const DEFAULT_OPTIONS: Required<RetryOptions> = {
   maxDelayMs: 30000,
   retryOn: (error: unknown) => {
     if (error instanceof ExternalAPIError) return error.isRetryable;
+    // Don't retry programming errors (bad code, bad JSON) — retrying won't help.
+    if (error instanceof TypeError || error instanceof SyntaxError || error instanceof RangeError) {
+      return false;
+    }
+    // Retry AbortError (timeout), network errors, and generic errors that
+    // could be transient.
     return true;
   },
 };

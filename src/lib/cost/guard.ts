@@ -12,8 +12,15 @@ export async function getOrCreateDailyCost() {
   const existing = await db.select().from(dailyCosts).where(eq(dailyCosts.date, date)).get();
   if (existing) return existing;
 
-  const [created] = await db.insert(dailyCosts).values({ date }).returning();
-  return created;
+  // Race-safe insert: if another process created the row between our check
+  // and our insert (common at midnight rollover), onConflictDoNothing
+  // swallows the unique-constraint error. We then re-read the existing row.
+  await db.insert(dailyCosts).values({ date }).onConflictDoNothing().run();
+  const row = await db.select().from(dailyCosts).where(eq(dailyCosts.date, date)).get();
+  if (!row) {
+    throw new Error(`Failed to create or read daily_costs row for ${date}`);
+  }
+  return row;
 }
 
 export async function checkBudget(): Promise<{ remaining: number; used: number; max: number }> {
@@ -70,6 +77,12 @@ export async function recordCost(
   amount: number,
   options?: { modelName?: string; description?: string; referenceId?: string; referenceType?: string },
 ): Promise<void> {
+  // Guard against bogus amounts that would corrupt the daily total. A bug
+  // producing a negative cost would artificially free up budget.
+  if (!Number.isFinite(amount) || amount < 0) {
+    return;
+  }
+
   const date = today();
   await getOrCreateDailyCost();
 

@@ -7,8 +7,11 @@ const BASE_URL = "https://openapi.etsy.com/v3";
 // OAuth 2.0 token management
 let cachedAccessToken: string | null = null;
 let tokenExpiresAt = 0;
+// Dedupe concurrent refreshes — many OAuth providers invalidate a refresh token
+// after a single use, so parallel refreshes would kill each other.
+let refreshInFlight: Promise<string> | null = null;
 
-async function refreshAccessToken(): Promise<string> {
+async function doRefresh(): Promise<string> {
   const response = await fetch("https://api.etsy.com/v3/public/oauth/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -31,6 +34,14 @@ async function refreshAccessToken(): Promise<string> {
   tokenExpiresAt = Date.now() + (data.expires_in - 60) * 1000; // Refresh 60s before expiry
 
   return data.access_token;
+}
+
+async function refreshAccessToken(): Promise<string> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = doRefresh().finally(() => {
+    refreshInFlight = null;
+  });
+  return refreshInFlight;
 }
 
 async function getAccessToken(): Promise<string> {

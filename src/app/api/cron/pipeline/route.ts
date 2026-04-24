@@ -31,19 +31,23 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // Check for concurrent runs
-  const lock = await acquireLock();
+  // Check for a paused run to resume (no lock needed — paused runs don't
+  // hold the lock). If we find one, acquireLock will atomically flip it to
+  // running; otherwise it creates a fresh run.
+  const resumable = await findResumableRun();
+
+  const lock = resumable
+    ? await acquireLock({ resumeRunId: resumable.runId, startFromStep: resumable.resumeFromStep })
+    : await acquireLock();
+
   if (!lock.acquired) {
     return NextResponse.json({ status: "skipped", reason: "Pipeline already running", runId: lock.existingRunId });
   }
 
-  // Check for a paused run to resume
-  const resumable = await findResumableRun();
-
   try {
     const result = resumable
-      ? await runPipeline({ startFromStep: resumable.resumeFromStep, existingRunId: resumable.runId })
-      : await runPipeline();
+      ? await runPipeline({ startFromStep: resumable.resumeFromStep, existingRunId: lock.runId })
+      : await runPipeline({ existingRunId: lock.runId });
 
     return NextResponse.json(result);
   } catch (error) {

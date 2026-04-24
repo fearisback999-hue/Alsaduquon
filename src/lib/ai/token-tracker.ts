@@ -10,15 +10,18 @@ export async function trackTextUsage(params: {
   outputTokens: number;
   durationMs?: number;
   pipelineRunId?: string;
-}): Promise<void> {
-  const cost = estimateTextCost(params.inputTokens, params.outputTokens);
+}): Promise<number> {
+  // Guard against bogus inputs that could deflate the daily cost total.
+  const inputTokens = Math.max(0, params.inputTokens);
+  const outputTokens = Math.max(0, params.outputTokens);
+  const cost = Math.max(0, estimateTextCost(inputTokens, outputTokens));
 
   await db.insert(tokenUsages).values({
     modelName: params.model,
     operation: params.operation,
-    inputTokens: params.inputTokens,
-    outputTokens: params.outputTokens,
-    totalTokens: params.inputTokens + params.outputTokens,
+    inputTokens,
+    outputTokens,
+    totalTokens: inputTokens + outputTokens,
     estimatedCost: cost,
     durationMs: params.durationMs,
     pipelineRunId: params.pipelineRunId,
@@ -26,8 +29,10 @@ export async function trackTextUsage(params: {
 
   await recordCost("openai_text", cost, {
     modelName: params.model,
-    description: `${params.operation}: ${params.inputTokens}in/${params.outputTokens}out tokens`,
+    description: `${params.operation}: ${inputTokens}in/${outputTokens}out tokens`,
   });
+
+  return cost;
 }
 
 export async function trackImageUsage(params: {
@@ -37,8 +42,8 @@ export async function trackImageUsage(params: {
   durationMs?: number;
   pipelineRunId?: string;
   referenceId?: string;
-}): Promise<void> {
-  const cost = estimateImageCost(params.quality);
+}): Promise<number> {
+  const cost = Math.max(0, estimateImageCost(params.quality));
 
   await db.insert(tokenUsages).values({
     modelName: params.model,
@@ -57,4 +62,6 @@ export async function trackImageUsage(params: {
     referenceId: params.referenceId,
     referenceType: "generated_image",
   });
+
+  return cost;
 }

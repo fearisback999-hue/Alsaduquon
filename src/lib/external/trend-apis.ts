@@ -136,7 +136,7 @@ Return your expanded niches as JSON.`;
       pipelineRunId,
     });
 
-    const expanded = result.parsed!.expanded_niches;
+    const expanded = result.parsed?.expanded_niches ?? [];
     log("info", `[Step 01] AI expanded ${safeKeywords.length} seeds into ${expanded.length} niche candidates`);
 
     return expanded.map((n) => ({

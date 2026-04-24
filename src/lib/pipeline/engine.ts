@@ -18,7 +18,8 @@ export async function runPipeline(options?: RunOptions): Promise<{ runId: string
   const startStep = options?.startFromStep ?? 1;
   const dryRun = options?.dryRun ?? false;
 
-  // Create or resume a pipeline run
+  // Create or resume a pipeline run. Callers (API routes) should pass an
+  // existingRunId claimed via acquireLock() to ensure at most one running run.
   let runId: string;
   if (options?.existingRunId) {
     runId = options.existingRunId;
@@ -29,6 +30,8 @@ export async function runPipeline(options?: RunOptions): Promise<{ runId: string
       startedAt: new Date().toISOString(),
     }).where(eq(pipelineRuns.id, runId));
   } else {
+    // Fallback path (e.g. direct invocation from tests). Does not guarantee
+    // exclusivity — production callers must use acquireLock().
     const [run] = await db.insert(pipelineRuns).values({
       status: "running",
       currentStep: startStep,

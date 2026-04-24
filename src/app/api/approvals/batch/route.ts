@@ -3,7 +3,8 @@ import { db } from "@/lib/db";
 import { approvalQueueEntries, etsyListings } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { runPipeline } from "@/lib/pipeline/engine";
-import { findResumableRun } from "@/lib/pipeline/concurrency";
+import { acquireLock, findResumableRun } from "@/lib/pipeline/concurrency";
+import { log } from "@/lib/logger";
 import { z } from "zod";
 import { requireSessionApi } from "@/lib/auth/require-session";
 
@@ -65,13 +66,19 @@ export async function POST(request: NextRequest) {
   if (approved > 0) {
     const resumable = await findResumableRun();
     if (resumable && resumable.resumeFromStep === 10) {
-      try {
-        publishResult = await runPipeline({
-          startFromStep: 10,
-          existingRunId: resumable.runId,
-        });
-      } catch {
-        // Publish can be triggered separately
+      const lock = await acquireLock({ resumeRunId: resumable.runId, startFromStep: 10 });
+      if (lock.acquired && lock.runId) {
+        try {
+          publishResult = await runPipeline({
+            startFromStep: 10,
+            existingRunId: lock.runId,
+          });
+        } catch (error) {
+          log("error", "Publish-on-approval failed", {
+            runId: lock.runId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
     }
   }

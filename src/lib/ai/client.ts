@@ -195,8 +195,12 @@ export async function generateImage(
     response_format: "url",
   });
 
+  const image = response.data?.[0];
+  if (!image?.url) {
+    throw new Error("Image generation returned no URL");
+  }
   return {
-    url: response.data![0].url!,
-    revisedPrompt: response.data![0].revised_prompt ?? undefined,
+    url: image.url,
+    revisedPrompt: image.revised_prompt ?? undefined,
   };
 }
