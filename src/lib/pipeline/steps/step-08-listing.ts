@@ -8,6 +8,7 @@ import { calculateDynamicPrice } from "@/lib/pricing/engine";
 import { fullModeration } from "@/lib/ai/moderation";
 import { enforcebudget } from "@/lib/cost/guard";
 import { recordCost } from "@/lib/cost/guard";
+import { log } from "@/lib/logger";
 import { ETSY_LISTING_FEE } from "@/lib/types";
 
 export default async function execute(context: PipelineContext): Promise<StepResult> {
@@ -96,8 +97,11 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         const mockup = productMockups[i];
         try {
           await etsy.uploadListingImage(etsyResult.listing_id, mockup.storageUrl ?? mockup.originalUrl!, i + 1);
-        } catch {
-          // Continue if one image fails
+        } catch (error) {
+          log("warn", `[Step 08] Mockup image upload failed for listing ${etsyResult.listing_id}`, {
+            mockupId: mockup.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
         }
       }
 
@@ -128,6 +132,9 @@ export default async function execute(context: PipelineContext): Promise<StepRes
       context.draftListingIds.push(listing.id);
       created++;
     } catch (error) {
+      log("error", `[Step 08] Draft listing creation failed for concept ${conceptId}`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
       failed++;
     }
   }

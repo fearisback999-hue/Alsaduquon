@@ -4,6 +4,7 @@ import { eq, inArray } from "drizzle-orm";
 import * as printify from "@/lib/external/printify";
 import { getProductConfig, getProductDisplayName, ALL_PRODUCT_TYPES } from "@/lib/printify/product-config";
 import { calculateDynamicPrice, getTypicalCost } from "@/lib/pricing/engine";
+import { log } from "@/lib/logger";
 
 async function getEnabledProductTypes(db: PipelineContext["db"]): Promise<string[]> {
   const setting = await db.select().from(settings).where(eq(settings.key, "enabled_product_types")).get();
@@ -56,7 +57,10 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
       const uploaded = await printify.uploadImage(`${image.id}.png`, base64);
       printifyImageId = uploaded.id;
-    } catch {
+    } catch (error) {
+      log("error", `[Step 06] Image upload to Printify failed for image ${image.id}`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
       failed++;
       continue;
     }
@@ -138,9 +142,11 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
         context.createdProductIds.push(dbProduct.id);
         created++;
-      } catch {
+      } catch (error) {
+        log("error", `[Step 06] Product creation failed for ${productType} (image ${image.id})`, {
+          error: error instanceof Error ? error.message : String(error),
+        });
         failed++;
-        // Record failed product attempt
         await context.db.insert(printifyProducts).values({
           designConceptId: image.designConceptId,
           generatedImageId: image.id,

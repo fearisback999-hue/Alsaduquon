@@ -3,6 +3,7 @@ import { printifyProducts, mockups } from "@/lib/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import * as printify from "@/lib/external/printify";
 import { persistImage } from "@/lib/images/storage";
+import { log } from "@/lib/logger";
 
 const MOCKUP_TYPES = ["front", "back", "side", "lifestyle", "closeup", "size_chart"] as const;
 
@@ -51,8 +52,12 @@ export default async function execute(context: PipelineContext): Promise<StepRes
             `mockups/${product.id}/mockup-${i + 1}.png`,
           );
           storedUrl = stored.url;
-        } catch {
-          storedUrl = img.src; // Fallback to Printify URL
+        } catch (error) {
+          log("warn", `[Step 07] Blob persist failed for mockup, using Printify URL as fallback`, {
+            productId: product.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          storedUrl = img.src;
         }
 
         // Assign mockup type based on position
@@ -70,7 +75,10 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
         totalMockups++;
       }
-    } catch {
+    } catch (error) {
+      log("error", `[Step 07] Mockup fetch failed for product ${product.id}`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
       failedProducts++;
     }
   }

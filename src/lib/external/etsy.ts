@@ -103,8 +103,12 @@ export async function uploadListingImage(
 ): Promise<{ listing_image_id: number }> {
   const shopId = process.env.ETSY_SHOP_ID!;
 
-  // Download image first
+  await rateLimit("etsy");
+
   const imageResponse = await fetch(imageUrl);
+  if (!imageResponse.ok) {
+    throw new ExternalAPIError("ImageDownload", imageResponse.status, `Failed to download image from ${imageUrl}`);
+  }
   const imageBuffer = await imageResponse.arrayBuffer();
   const blob = new Blob([imageBuffer], { type: "image/png" });
 
@@ -150,7 +154,7 @@ export async function getListing(listingId: number): Promise<unknown> {
 
 export async function updateListing(
   listingId: number,
-  data: { title?: string; description?: string; price?: number; tags?: string[] },
+  data: { title?: string; description?: string; price?: number; tags?: string[]; state?: string },
 ): Promise<unknown> {
   const shopId = process.env.ETSY_SHOP_ID!;
   const body: Record<string, unknown> = {};
@@ -158,6 +162,7 @@ export async function updateListing(
   if (data.description) body.description = data.description;
   if (data.price) body.price = { amount: Math.round(data.price * 100), divisor: 100, currency_code: "USD" };
   if (data.tags) body.tags = data.tags.slice(0, 13);
+  if (data.state) body.state = data.state;
 
   return withRetry(() =>
     etsyFetch(`/application/shops/${shopId}/listings/${listingId}`, {

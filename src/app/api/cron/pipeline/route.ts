@@ -4,12 +4,14 @@ import { acquireLock, findResumableRun } from "@/lib/pipeline/concurrency";
 import { db } from "@/lib/db";
 import { settings } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { verifyCronSecret } from "@/lib/auth/cron-auth";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300; // 5 minutes (Vercel Pro)
+export const maxDuration = 300;
 
 export async function GET(request: NextRequest) {
-  // Auth is handled by middleware (CRON_SECRET)
+  const denied = verifyCronSecret(request);
+  if (denied) return denied;
 
   // Respect autopilot toggle — when disabled, skip scheduled runs. Manual
   // triggers via /api/pipeline/trigger still work.

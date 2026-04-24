@@ -1,12 +1,15 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { aggregateNicheAnalytics, aggregateDailyAnalytics } from "@/lib/analytics/aggregator";
 import { syncListingMetrics } from "@/lib/analytics/listing-metrics";
 import { log } from "@/lib/logger";
+import { verifyCronSecret } from "@/lib/auth/cron-auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const denied = verifyCronSecret(request);
+  if (denied) return denied;
   try {
     const today = new Date().toISOString().split("T")[0];
 

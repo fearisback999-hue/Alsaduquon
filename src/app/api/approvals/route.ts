@@ -2,10 +2,13 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { approvalQueueEntries, etsyListings, printifyProducts, mockups, designConcepts, niches } from "@/lib/db/schema";
 import { eq, inArray } from "drizzle-orm";
+import { requireSessionApi } from "@/lib/auth/require-session";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const denied = await requireSessionApi();
+  if (denied) return denied;
   const rows = await db
     .select({
       entry: approvalQueueEntries,

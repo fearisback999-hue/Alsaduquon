@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { settings } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { requireSessionApi } from "@/lib/auth/require-session";
 
 export const dynamic = "force-dynamic";
 
@@ -23,11 +24,16 @@ const updateSettingSchema = z.object({
 });
 
 export async function GET() {
+  const denied = await requireSessionApi();
+  if (denied) return denied;
+
   const allSettings = await db.select().from(settings).all();
   return NextResponse.json({ settings: allSettings });
 }
 
 export async function PUT(request: NextRequest) {
+  const denied = await requireSessionApi();
+  if (denied) return denied;
   const body = await request.json().catch(() => null);
   const parsed = updateSettingSchema.safeParse(body);
 

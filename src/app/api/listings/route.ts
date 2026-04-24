@@ -2,12 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { etsyListings, printifyProducts, listingMetrics } from "@/lib/db/schema";
 import { eq, desc, sql } from "drizzle-orm";
+import { requireSessionApi } from "@/lib/auth/require-session";
 
 export const dynamic = "force-dynamic";
 
 const VALID_STATUSES = ["draft", "pending_approval", "approved", "rejected", "published", "deactivated"] as const;
 
 export async function GET(request: NextRequest) {
+  const denied = await requireSessionApi();
+  if (denied) return denied;
   const { searchParams } = new URL(request.url);
   const status = searchParams.get("status");
   const limit = Math.min(Math.max(parseInt(searchParams.get("limit") ?? "50") || 50, 1), 100);

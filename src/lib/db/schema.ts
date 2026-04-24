@@ -234,7 +234,7 @@ export const approvalQueueEntries = sqliteTable("approval_queue_entries", {
   batchNumber: integer("batch_number"),
   batchOrder: integer("batch_order"),
   mode: text("mode", { enum: ["manual", "auto"] }).notNull().default("manual"),
-  status: text("status", { enum: ["pending", "approved", "rejected", "revision_requested"] }).notNull().default("pending"),
+  status: text("status", { enum: ["pending", "approved", "rejected", "revision_requested", "published"] }).notNull().default("pending"),
   feedback: text("feedback"),
   revisionNotes: text("revision_notes"),
   autoScore: real("auto_score"),

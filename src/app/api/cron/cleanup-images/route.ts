@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { generatedImages } from "@/lib/db/schema";
 import { and, eq, isNotNull, lt, inArray } from "drizzle-orm";
@@ -6,16 +6,17 @@ import { del } from "@vercel/blob";
 import { log } from "@/lib/logger";
 import { purgeExpiredSessions } from "@/lib/auth/sessions";
 import { purgeExpiredAttempts } from "@/lib/auth/brute-force";
+import { verifyCronSecret } from "@/lib/auth/cron-auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
-// Retain rejected/failed images for this long before cleanup, to give us a
-// window to inspect failures in the dashboard.
 const RETENTION_DAYS = 14;
 const BATCH_SIZE = 50;
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const denied = verifyCronSecret(request);
+  if (denied) return denied;
   const cutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
   const stale = await db

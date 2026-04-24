@@ -21,25 +21,18 @@ export async function isLockedOut(ip: string): Promise<boolean> {
 
 export async function recordFailedAttempt(ip: string): Promise<void> {
   const now = Date.now();
-  const existing = await db
-    .select({ count: loginAttempts.count, lastAttemptAt: loginAttempts.lastAttemptAt })
-    .from(loginAttempts)
-    .where(eq(loginAttempts.ip, ip))
-    .get();
 
-  if (!existing) {
-    await db.insert(loginAttempts).values({ ip, count: 1, lastAttemptAt: now }).run();
-    return;
-  }
-
-  const expired = now - existing.lastAttemptAt > LOCKOUT_MS;
-  await db
-    .update(loginAttempts)
-    .set({
-      count: expired ? 1 : sql`${loginAttempts.count} + 1`,
-      lastAttemptAt: now,
+  // Atomic upsert — avoids the TOCTOU race where two concurrent failed
+  // logins both read count=0 and both try to INSERT.
+  await db.insert(loginAttempts)
+    .values({ ip, count: 1, lastAttemptAt: now })
+    .onConflictDoUpdate({
+      target: loginAttempts.ip,
+      set: {
+        count: sql`CASE WHEN ${now} - ${loginAttempts.lastAttemptAt} > ${LOCKOUT_MS} THEN 1 ELSE ${loginAttempts.count} + 1 END`,
+        lastAttemptAt: now,
+      },
     })
-    .where(eq(loginAttempts.ip, ip))
     .run();
 }
 

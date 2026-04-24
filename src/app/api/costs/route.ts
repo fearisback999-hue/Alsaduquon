@@ -2,10 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { dailyCosts, costEntries, tokenUsages } from "@/lib/db/schema";
 import { desc, eq } from "drizzle-orm";
+import { requireSessionApi } from "@/lib/auth/require-session";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
+  const denied = await requireSessionApi();
+  if (denied) return denied;
   const { searchParams } = new URL(request.url);
   const days = Math.min(Math.max(parseInt(searchParams.get("days") ?? "30") || 30, 1), 365);
 

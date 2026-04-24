@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { runPipeline } from "@/lib/pipeline/engine";
 import { acquireLock } from "@/lib/pipeline/concurrency";
 import { z } from "zod";
+import { requireSessionApi } from "@/lib/auth/require-session";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -12,6 +13,8 @@ const triggerSchema = z.object({
 }).optional().default({});
 
 export async function POST(request: NextRequest) {
+  const denied = await requireSessionApi();
+  if (denied) return denied;
   const body = await request.json().catch(() => ({}));
   const parsed = triggerSchema.safeParse(body);
 

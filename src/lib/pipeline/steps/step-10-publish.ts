@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import * as etsy from "@/lib/external/etsy";
 import * as printify from "@/lib/external/printify";
 import { enforceListingLimit, incrementListingCount, checkListingLimit } from "@/lib/cost/guard";
+import { log } from "@/lib/logger";
 
 export default async function execute(context: PipelineContext): Promise<StepResult> {
   if (context.dryRun) {
@@ -29,7 +30,10 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     // Check daily listing limit
     try {
       await enforceListingLimit();
-    } catch {
+    } catch (error) {
+      log("info", `[Step 10] Listing limit reached, skipping remaining entries`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
       skippedLimit++;
       continue;
     }
@@ -69,8 +73,9 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         updatedAt: new Date().toISOString(),
       }).where(eq(etsyListings.id, listing.id));
 
-      // Update approval entry
+      // Mark approval entry as published so it's not re-processed on resume
       await context.db.update(approvalQueueEntries).set({
+        status: "published",
         updatedAt: new Date().toISOString(),
       }).where(eq(approvalQueueEntries.id, entry.id));
 
@@ -80,6 +85,10 @@ export default async function execute(context: PipelineContext): Promise<StepRes
       published++;
       context.approvedListingIds.push(listing.id);
     } catch (error) {
+      log("error", `[Step 10] Publish failed for listing ${listing.id}`, {
+        etsyListingId: listing.etsyListingId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       failed++;
     }
   }

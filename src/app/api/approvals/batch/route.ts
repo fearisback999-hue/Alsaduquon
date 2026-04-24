@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { runPipeline } from "@/lib/pipeline/engine";
 import { findResumableRun } from "@/lib/pipeline/concurrency";
 import { z } from "zod";
+import { requireSessionApi } from "@/lib/auth/require-session";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,9 @@ const batchApprovalSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  const denied = await requireSessionApi();
+  if (denied) return denied;
+
   const body = await request.json().catch(() => null);
   const parsed = batchApprovalSchema.safeParse(body);
 

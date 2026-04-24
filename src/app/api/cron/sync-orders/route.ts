@@ -1,16 +1,18 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { etsyListings, orders } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import * as etsy from "@/lib/external/etsy";
 import { estimateProfit } from "@/lib/etsy/pricing";
 import { log } from "@/lib/logger";
+import { verifyCronSecret } from "@/lib/auth/cron-auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
-export async function GET() {
-  // Auth is handled by middleware (CRON_SECRET)
+export async function GET(request: NextRequest) {
+  const denied = verifyCronSecret(request);
+  if (denied) return denied;
 
   try {
     // Fetch recent receipts from Etsy (last 24 hours)

@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { etsyListings, listingMetrics, printifyProducts, designConcepts, niches } from "@/lib/db/schema";
 import { eq, and, sql, lt, gt } from "drizzle-orm";
@@ -8,13 +8,16 @@ import { trackTextUsage } from "@/lib/ai/token-tracker";
 import { enforcebudget } from "@/lib/cost/guard";
 import * as etsy from "@/lib/external/etsy";
 import { log } from "@/lib/logger";
+import { verifyCronSecret } from "@/lib/auth/cron-auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const MAX_OPTIMIZE_PER_RUN = 10;
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const denied = verifyCronSecret(request);
+  if (denied) return denied;
   try {
     let optimized = 0;
     let deactivated = 0;
@@ -60,8 +63,21 @@ export async function GET() {
         const fullListing = await db.select().from(etsyListings).where(eq(etsyListings.id, listing.listingId)).get();
         if (fullListing?.publishedAt && fullListing.publishedAt < thirtyDaysAgo) {
           log("info", `Deactivating zombie listing: ${listing.title} (${listing.views} views, 0 sales)`);
+          try {
+            if (fullListing.etsyListingId) {
+              await etsy.updateListing(parseInt(fullListing.etsyListingId), { state: "inactive" });
+            }
+            await db.update(etsyListings).set({
+              status: "deactivated",
+              updatedAt: new Date().toISOString(),
+            }).where(eq(etsyListings.id, fullListing.id));
+          } catch (err) {
+            log("error", `Failed to deactivate listing ${listing.title}`, {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
           deactivated++;
-          continue; // Skip optimization, flag for manual review
+          continue;
         }
       }
 
