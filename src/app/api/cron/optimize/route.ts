@@ -9,6 +9,7 @@ import { enforcebudget } from "@/lib/cost/guard";
 import * as etsy from "@/lib/external/etsy";
 import { log } from "@/lib/logger";
 import { verifyCronSecret } from "@/lib/auth/cron-auth";
+import { runRepricing } from "@/lib/pricing/optimizer";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -21,6 +22,10 @@ export async function GET(request: NextRequest) {
   try {
     let optimized = 0;
     let deactivated = 0;
+
+    // Phase 1: Dynamic repricing based on listing performance metrics
+    const repricingResult = await runRepricing();
+    log("info", `Repricing: ${repricingResult.adjusted} adjusted (${repricingResult.raised} raised, ${repricingResult.lowered} lowered), ${repricingResult.skipped} skipped`);
 
     // Find underperforming listings:
     // Published 14+ days ago, has views but low conversion (<1%)
@@ -156,6 +161,7 @@ Return JSON:
       underperformersFound: underperformers.length,
       optimized,
       deactivated,
+      repricing: repricingResult,
     });
   } catch (error) {
     log("error", "Optimization cron failed", { error: error instanceof Error ? error.message : String(error) });

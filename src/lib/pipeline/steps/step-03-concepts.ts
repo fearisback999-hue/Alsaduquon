@@ -8,6 +8,7 @@ import { fullModeration } from "@/lib/ai/moderation";
 import { enforcebudget } from "@/lib/cost/guard";
 import { formatSalesContextForConcepts } from "@/lib/pipeline/sales-feedback";
 import { formatSeasonalContext } from "@/lib/pipeline/seasonal-calendar";
+import { formatDesignPerformanceForConcepts } from "@/lib/analytics/design-performance";
 import { log } from "@/lib/logger";
 import { sanitizeForPrompt } from "@/lib/ai/sanitize";
 
@@ -43,13 +44,15 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     await enforcebudget(0.05);
     const safeNicheName = sanitizeForPrompt(niche.name);
 
-    // Get sales feedback for this niche
+    // Get sales feedback and design performance for this niche
     const salesContext = await formatSalesContextForConcepts(niche.name);
     const seasonalContext = formatSeasonalContext();
+    const designPerfContext = await formatDesignPerformanceForConcepts(niche.name);
 
     const prompt = `Generate 5 print-on-demand design concepts for the niche: "${safeNicheName}"
 
 ${salesContext}
+${designPerfContext}
 
 ${seasonalContext ? seasonalContext + "\n\n" : ""}${PRODUCT_TYPE_CONTEXT}
 

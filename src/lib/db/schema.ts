@@ -286,8 +286,8 @@ export const dailyCosts = sqliteTable("daily_costs", {
   apiCost: real("api_cost").notNull().default(0),
   listingFees: real("listing_fees").notNull().default(0),
   listingsCreated: integer("listings_created").notNull().default(0),
-  maxDailyCost: real("max_daily_cost").notNull().default(10),
-  maxDailyListings: integer("max_daily_listings").notNull().default(5),
+  maxDailyCost: real("max_daily_cost").notNull().default(50),
+  maxDailyListings: integer("max_daily_listings").notNull().default(25),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
   updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
 }, (table) => ({

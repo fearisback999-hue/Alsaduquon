@@ -5,7 +5,9 @@ import { generateImage, analyzeImage } from "@/lib/ai/client";
 import { ImageQualitySchema } from "@/lib/ai/schemas";
 import { trackImageUsage, trackTextUsage } from "@/lib/ai/token-tracker";
 import { enforcebudget } from "@/lib/cost/guard";
-import { persistImage } from "@/lib/images/storage";
+import { persistImage, uploadImageBuffer } from "@/lib/images/storage";
+import { renderTextOnBackground, pickTextColor, extractDisplayText } from "@/lib/images/text-renderer";
+import { log } from "@/lib/logger";
 import { DALLE_COST_HD, GPT4O_VISION_COST_ESTIMATE } from "@/lib/types";
 
 const QUALITY_SYSTEM_PROMPT = "You are a print-on-demand quality inspector. Evaluate images for commercial viability on products like t-shirts, mugs, posters, and phone cases. Be strict — customers pay $25-45 for these products.";
@@ -79,10 +81,47 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         const durationMs = Date.now() - startTime;
 
         // CRITICAL: Immediately persist to Vercel Blob — DALL-E URLs expire in ~1 hour
-        const stored = await persistImage(
+        let stored = await persistImage(
           result.url,
           `designs/${concept.nicheId}/${concept.id}-attempt${attempt}.png`,
         );
+
+        // TEXT OVERLAY: For typography/hybrid designs, render text programmatically
+        // instead of trusting DALL-E 3's unreliable text rendering.
+        if (concept.designType === "typography" || concept.designType === "hybrid") {
+          const displayText = extractDisplayText(concept.title, concept.description ?? "");
+          if (displayText) {
+            try {
+              const bgResponse = await fetch(stored.url);
+              const bgBuffer = Buffer.from(await bgResponse.arrayBuffer());
+              const colors = await pickTextColor(bgBuffer);
+
+              let styleCategory = "default";
+              try {
+                const palette = JSON.parse(concept.colorPalette ?? "{}");
+                styleCategory = palette.style_category ?? "default";
+              } catch { /* ignore */ }
+
+              const rendered = await renderTextOnBackground({
+                text: displayText,
+                backgroundBuffer: bgBuffer,
+                fontFamily: styleCategory,
+                color: colors.textColor,
+                strokeColor: colors.strokeColor,
+              });
+
+              stored = await uploadImageBuffer(
+                rendered.buffer,
+                `designs/${concept.nicheId}/${concept.id}-attempt${attempt}-text.png`,
+              );
+              log("info", `[Step 04] Text overlay applied: "${displayText}" on ${concept.title}`);
+            } catch (textErr) {
+              log("warn", `[Step 04] Text overlay failed for ${concept.title}, using raw DALL-E output`, {
+                error: textErr instanceof Error ? textErr.message : String(textErr),
+              });
+            }
+          }
+        }
 
         // Track image generation cost
         await trackImageUsage({

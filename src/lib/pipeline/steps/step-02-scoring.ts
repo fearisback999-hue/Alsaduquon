@@ -8,6 +8,7 @@ import { enforcebudget } from "@/lib/cost/guard";
 import { SCORING_WEIGHTS, SCORE_THRESHOLD } from "@/lib/types";
 import { formatSalesContextForScoring } from "@/lib/pipeline/sales-feedback";
 import { getActiveSeasons, matchNicheToSeason } from "@/lib/pipeline/seasonal-calendar";
+import { formatNicheVelocityForScoring } from "@/lib/analytics/design-performance";
 import { log } from "@/lib/logger";
 import { sanitizeForPrompt } from "@/lib/ai/sanitize";
 
@@ -25,8 +26,9 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     return { status: "completed", message: "No niches to score" };
   }
 
-  // Load sales context once for all niches
+  // Load sales context and real-time velocity data once for all niches
   const salesContext = await formatSalesContextForScoring();
+  const velocityContext = await formatNicheVelocityForScoring();
 
   // Check if seasonal boost is enabled
   const seasonalSetting = await context.db.select().from(settings).where(eq(settings.key, "seasonal_boost_enabled")).get();
@@ -121,6 +123,7 @@ PRE-RESEARCH ANALYSIS:
 
 OUR STORE'S HISTORICAL PERFORMANCE:
 ${salesContext}
+${velocityContext}
 
 Rate these metrics (0-10 scale, 10 = best for a POD seller):
 1. search_volume_score: How high is demand? Use the search volume number if available. (weight: ${SCORING_WEIGHTS.searchVolume})
