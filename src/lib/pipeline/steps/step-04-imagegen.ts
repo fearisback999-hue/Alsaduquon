@@ -200,6 +200,14 @@ export default async function execute(context: PipelineContext): Promise<StepRes
           attempt,
           maxAttempts,
           status: "generated",
+          qualityScores: quality ? JSON.stringify({
+            composition: quality.composition,
+            text_legibility: quality.text_legibility,
+            print_suitability: quality.print_suitability,
+            commercial_appeal: quality.commercial_appeal,
+            technical_quality: quality.technical_quality,
+            overall_score: quality.overall_score,
+          }) : null,
           pipelineRunId: context.pipelineRunId,
         }).returning();
 

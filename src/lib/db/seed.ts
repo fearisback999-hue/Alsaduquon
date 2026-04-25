@@ -11,6 +11,9 @@ const DEFAULT_SETTINGS = [
   { key: "mockups_per_product", value: "10", type: "number" as const, group: "pipeline" as const, description: "Target mockup count per product" },
   { key: "approval_batch_size", value: "5", type: "number" as const, group: "pipeline" as const, description: "Number of listings per approval batch" },
   { key: "approval_mode", value: "manual", type: "string" as const, group: "pipeline" as const, description: "Approval mode: manual or auto" },
+  { key: "training_wheels_enabled", value: "true", type: "boolean" as const, group: "pipeline" as const, description: "Block auto-approval until N manual reviews are completed (safety for new shops)" },
+  { key: "training_wheels_min_reviews", value: "20", type: "number" as const, group: "pipeline" as const, description: "Manual approvals required before auto-approval activates" },
+  { key: "annual_revenue_goal", value: "150000", type: "number" as const, group: "general" as const, description: "Annual revenue target in USD for goal tracking" },
 
   // Pricing
   { key: "base_price", value: "25.00", type: "number" as const, group: "pricing" as const, description: "Minimum retail price in USD" },

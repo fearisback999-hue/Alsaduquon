@@ -114,6 +114,7 @@ export const generatedImages = sqliteTable("generated_images", {
   maxAttempts: integer("max_attempts").notNull().default(3),
   status: text("status", { enum: ["pending", "generating", "generated", "failed", "validated", "rejected"] }).notNull().default("pending"),
   errorMessage: text("error_message"),
+  qualityScores: text("quality_scores"), // JSON: { composition, text_legibility, print_suitability, commercial_appeal, technical_quality, overall_score }
   pipelineRunId: text("pipeline_run_id").references(() => pipelineRuns.id),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
 }, (table) => ({
