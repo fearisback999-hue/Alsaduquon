@@ -1,6 +1,41 @@
 import { chatCompletion } from "@/lib/ai/client";
+import { claudeCompletion } from "@/lib/ai/providers";
 import { ListingTagsSchema } from "@/lib/ai/schemas";
 import { trackTextUsage } from "@/lib/ai/token-tracker";
+
+const useClaude = () => !!process.env.ANTHROPIC_API_KEY;
+
+async function completeText(prompt: string, opts: { systemPrompt: string; maxTokens: number; temperature: number }, pipelineRunId?: string) {
+  if (useClaude()) {
+    const result = await claudeCompletion(prompt, {
+      systemPrompt: opts.systemPrompt,
+      maxTokens: opts.maxTokens,
+      temperature: opts.temperature,
+    });
+    await trackTextUsage({
+      model: result.model,
+      operation: "seo_text",
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
+      pipelineRunId,
+      provider: "anthropic",
+    });
+    return result;
+  }
+  const result = await chatCompletion(prompt, {
+    systemPrompt: opts.systemPrompt,
+    maxTokens: opts.maxTokens,
+    temperature: opts.temperature,
+  });
+  await trackTextUsage({
+    model: result.model,
+    operation: "seo_text",
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens,
+    pipelineRunId,
+  });
+  return result;
+}
 
 export async function generateListingTitle(
   niche: string,
@@ -22,21 +57,13 @@ Rules:
 
 Return ONLY the title text, nothing else.`;
 
-  const result = await chatCompletion(prompt, {
-    systemPrompt: "You are an Etsy SEO expert. Generate optimized listing titles that rank well in Etsy search.",
+  const result = await completeText(prompt, {
+    systemPrompt: "You are an Etsy SEO expert. Generate optimized listing titles that rank well in Etsy search. Return ONLY the title, no explanation.",
     maxTokens: 200,
     temperature: 0.6,
-  });
+  }, pipelineRunId);
 
-  await trackTextUsage({
-    model: result.model,
-    operation: "seo_title",
-    inputTokens: result.inputTokens,
-    outputTokens: result.outputTokens,
-    pipelineRunId,
-  });
-
-  return result.content.trim().slice(0, maxLength);
+  return result.content.trim().replace(/^["']|["']$/g, "").slice(0, maxLength);
 }
 
 export async function generateListingDescription(
@@ -61,19 +88,11 @@ Rules:
 
 Return ONLY the description text.`;
 
-  const result = await chatCompletion(prompt, {
-    systemPrompt: "You are an Etsy copywriter who creates compelling product descriptions that convert browsers into buyers.",
+  const result = await completeText(prompt, {
+    systemPrompt: "You are an Etsy copywriter who creates compelling product descriptions that convert browsers into buyers. Return ONLY the description, no explanation or commentary.",
     maxTokens: 1500,
     temperature: 0.7,
-  });
-
-  await trackTextUsage({
-    model: result.model,
-    operation: "seo_description",
-    inputTokens: result.inputTokens,
-    outputTokens: result.outputTokens,
-    pipelineRunId,
-  });
+  }, pipelineRunId);
 
   return result.content.trim();
 }
@@ -98,6 +117,7 @@ Rules:
 
 Return JSON: {"tags": ["tag1", "tag2", ...]}`;
 
+  // Tags need structured output — use GPT for this (better at strict JSON)
   const result = await chatCompletion(prompt, {
     systemPrompt: "You are an Etsy SEO specialist. Generate tags that maximize search visibility.",
     maxTokens: 300,
@@ -120,21 +140,17 @@ Return JSON: {"tags": ["tag1", "tag2", ...]}`;
 export function calculateSEOScore(title: string, description: string, tags: string[]): number {
   let score = 0;
 
-  // Title length (optimal: 100-140 chars)
   if (title.length >= 100 && title.length <= 140) score += 25;
   else if (title.length >= 60) score += 15;
   else score += 5;
 
-  // Description length (optimal: 300-600 words)
   const wordCount = description.split(/\s+/).length;
   if (wordCount >= 300 && wordCount <= 600) score += 25;
   else if (wordCount >= 150) score += 15;
   else score += 5;
 
-  // Tags count (max 13)
   score += Math.min(tags.length / 13, 1) * 25;
 
-  // Tag diversity (unique words across tags)
   const allWords = tags.flatMap((t) => t.toLowerCase().split(/\s+/));
   const uniqueWords = new Set(allWords).size;
   score += Math.min(uniqueWords / 20, 1) * 25;

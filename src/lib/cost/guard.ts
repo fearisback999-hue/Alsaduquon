@@ -73,7 +73,7 @@ export async function enforceListingLimit(): Promise<void> {
 }
 
 export async function recordCost(
-  category: "openai_text" | "openai_image" | "openai_moderation" | "printify" | "etsy_fee" | "trend_api" | "other",
+  category: "openai_text" | "openai_image" | "openai_moderation" | "anthropic_text" | "replicate_image" | "printify" | "etsy_fee" | "trend_api" | "other",
   amount: number,
   options?: { modelName?: string; description?: string; referenceId?: string; referenceType?: string },
 ): Promise<void> {

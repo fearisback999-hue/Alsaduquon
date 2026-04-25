@@ -298,7 +298,7 @@ export const dailyCosts = sqliteTable("daily_costs", {
 export const costEntries = sqliteTable("cost_entries", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   date: text("date").notNull(), // YYYY-MM-DD
-  category: text("category", { enum: ["openai_text", "openai_image", "openai_moderation", "printify", "etsy_fee", "trend_api", "other"] }).notNull(),
+  category: text("category", { enum: ["openai_text", "openai_image", "openai_moderation", "anthropic_text", "replicate_image", "printify", "etsy_fee", "trend_api", "other"] }).notNull(),
   modelName: text("model_name"),
   amount: real("amount").notNull(),
   description: text("description"),

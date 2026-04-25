@@ -7,6 +7,8 @@ const LIMITS: Record<string, RateLimiterConfig> = {
   printify: { maxRequests: 5, windowMs: 1000 },
   etsy: { maxRequests: 10, windowMs: 1000 },
   openai: { maxRequests: 5, windowMs: 60000 },
+  anthropic: { maxRequests: 5, windowMs: 60000 },
+  replicate: { maxRequests: 10, windowMs: 60000 },
   podcs: { maxRequests: 10, windowMs: 60000 },
   flying_research: { maxRequests: 10, windowMs: 60000 },
 };

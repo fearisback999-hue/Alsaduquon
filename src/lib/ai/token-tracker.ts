@@ -10,11 +10,12 @@ export async function trackTextUsage(params: {
   outputTokens: number;
   durationMs?: number;
   pipelineRunId?: string;
+  provider?: string;
 }): Promise<number> {
-  // Guard against bogus inputs that could deflate the daily cost total.
   const inputTokens = Math.max(0, params.inputTokens);
   const outputTokens = Math.max(0, params.outputTokens);
-  const cost = Math.max(0, estimateTextCost(inputTokens, outputTokens));
+  const provider = params.provider ?? (params.model.startsWith("claude") ? "anthropic" : "openai");
+  const cost = Math.max(0, estimateTextCost(inputTokens, outputTokens, provider));
 
   await db.insert(tokenUsages).values({
     modelName: params.model,
@@ -27,7 +28,8 @@ export async function trackTextUsage(params: {
     pipelineRunId: params.pipelineRunId,
   });
 
-  await recordCost("openai_text", cost, {
+  const costCategory = provider === "anthropic" ? "anthropic_text" : "openai_text";
+  await recordCost(costCategory, cost, {
     modelName: params.model,
     description: `${params.operation}: ${inputTokens}in/${outputTokens}out tokens`,
   });
@@ -38,7 +40,7 @@ export async function trackTextUsage(params: {
 export async function trackImageUsage(params: {
   model: string;
   operation: string;
-  quality: "hd" | "standard";
+  quality: "hd" | "standard" | "flux";
   durationMs?: number;
   pipelineRunId?: string;
   referenceId?: string;
@@ -56,7 +58,8 @@ export async function trackImageUsage(params: {
     pipelineRunId: params.pipelineRunId,
   });
 
-  await recordCost("openai_image", cost, {
+  const costCategory = params.quality === "flux" ? "replicate_image" : "openai_image";
+  await recordCost(costCategory, cost, {
     modelName: params.model,
     description: `Image generation (${params.quality})`,
     referenceId: params.referenceId,

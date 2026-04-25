@@ -1,14 +1,15 @@
 import type { PipelineContext, StepResult } from "../context";
 import { designConcepts, generatedImages } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import { generateImage, analyzeImage } from "@/lib/ai/client";
+import { analyzeImage } from "@/lib/ai/client";
+import { generateImageFlux } from "@/lib/ai/providers";
 import { ImageQualitySchema } from "@/lib/ai/schemas";
 import { trackImageUsage, trackTextUsage } from "@/lib/ai/token-tracker";
 import { enforcebudget } from "@/lib/cost/guard";
-import { persistImage, uploadImageBuffer } from "@/lib/images/storage";
+import { uploadImageBuffer } from "@/lib/images/storage";
 import { renderTextOnBackground, pickTextColor, extractDisplayText } from "@/lib/images/text-renderer";
 import { log } from "@/lib/logger";
-import { DALLE_COST_HD, GPT4O_VISION_COST_ESTIMATE } from "@/lib/types";
+import { FLUX_PRO_ULTRA_COST, GPT4O_VISION_COST_ESTIMATE } from "@/lib/types";
 
 const QUALITY_SYSTEM_PROMPT = "You are a print-on-demand quality inspector. Evaluate images for commercial viability on products like t-shirts, mugs, posters, and phone cases. Be strict — customers pay $25-45 for these products.";
 
@@ -45,7 +46,6 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     return { status: "completed", message: "Dry run: skipped image generation" };
   }
 
-  // Get moderated concepts ready for image generation
   const concepts = await context.db
     .select()
     .from(designConcepts)
@@ -55,6 +55,11 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   if (concepts.length === 0) {
     return { status: "completed", message: "No concepts ready for image generation" };
   }
+
+  // Determine which image generator to use
+  const useFlux = !!process.env.REPLICATE_API_TOKEN;
+  const generatorName = useFlux ? "flux-1.1-pro-ultra" : "dall-e-3";
+  const imageCost = useFlux ? FLUX_PRO_ULTRA_COST : 0.08;
 
   let generated = 0;
   let failed = 0;
@@ -67,27 +72,31 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     let currentPrompt = concept.stylePrompt ?? concept.title;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      // Budget check: image generation + quality check
-      await enforcebudget(DALLE_COST_HD + GPT4O_VISION_COST_ESTIMATE);
+      await enforcebudget(imageCost + GPT4O_VISION_COST_ESTIMATE);
 
       try {
         const startTime = Date.now();
 
-        const result = await generateImage(currentPrompt, {
-          quality: "hd",
-          size: "1024x1024",
-        });
+        let stored: { url: string; pathname: string };
+
+        if (useFlux) {
+          // Flux 1.1 Pro Ultra — returns a buffer directly
+          const result = await generateImageFlux(currentPrompt);
+          stored = await uploadImageBuffer(
+            result.buffer,
+            `designs/${concept.nicheId}/${concept.id}-attempt${attempt}.png`,
+          );
+        } else {
+          // Fallback to DALL-E 3
+          const { generateImage } = await import("@/lib/ai/client");
+          const result = await generateImage(currentPrompt, { quality: "hd", size: "1024x1024" });
+          const { persistImage } = await import("@/lib/images/storage");
+          stored = await persistImage(result.url, `designs/${concept.nicheId}/${concept.id}-attempt${attempt}.png`);
+        }
 
         const durationMs = Date.now() - startTime;
 
-        // CRITICAL: Immediately persist to Vercel Blob — DALL-E URLs expire in ~1 hour
-        let stored = await persistImage(
-          result.url,
-          `designs/${concept.nicheId}/${concept.id}-attempt${attempt}.png`,
-        );
-
         // TEXT OVERLAY: For typography/hybrid designs, render text programmatically
-        // instead of trusting DALL-E 3's unreliable text rendering.
         if (concept.designType === "typography" || concept.designType === "hybrid") {
           const displayText = extractDisplayText(concept.title, concept.description ?? "");
           if (displayText) {
@@ -116,24 +125,23 @@ export default async function execute(context: PipelineContext): Promise<StepRes
               );
               log("info", `[Step 04] Text overlay applied: "${displayText}" on ${concept.title}`);
             } catch (textErr) {
-              log("warn", `[Step 04] Text overlay failed for ${concept.title}, using raw DALL-E output`, {
+              log("warn", `[Step 04] Text overlay failed for ${concept.title}, using raw output`, {
                 error: textErr instanceof Error ? textErr.message : String(textErr),
               });
             }
           }
         }
 
-        // Track image generation cost
         await trackImageUsage({
-          model: "dall-e-3",
+          model: generatorName,
           operation: "image_generation",
-          quality: "hd",
+          quality: useFlux ? "flux" : "hd",
           durationMs,
           pipelineRunId: context.pipelineRunId,
         });
-        totalCost += DALLE_COST_HD;
+        totalCost += imageCost;
 
-        // QUALITY GATE: Evaluate the generated image with GPT-4o Vision
+        // QUALITY GATE: Evaluate with GPT-4o Vision
         const qualityCheck = await analyzeImage(
           stored.url,
           buildQualityPrompt(concept.stylePrompt ?? concept.title),
@@ -158,21 +166,26 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         const quality = qualityCheck.parsed;
 
         if (quality && !quality.pass && attempt < maxAttempts) {
-          // Quality failed — record this attempt and refine prompt for next try
           qualityRejected++;
           await context.db.insert(generatedImages).values({
             designConceptId: concept.id,
             prompt: currentPrompt,
-            revisedPrompt: result.revisedPrompt,
-            originalUrl: result.url,
             storagePath: stored.pathname,
             storageUrl: stored.url,
-            model: "dall-e-3",
+            model: generatorName,
             size: "1024x1024",
-            quality: "hd",
+            quality: useFlux ? "hd" : "hd",
             attempt,
             maxAttempts,
             status: "rejected",
+            qualityScores: JSON.stringify({
+              composition: quality.composition,
+              text_legibility: quality.text_legibility,
+              print_suitability: quality.print_suitability,
+              commercial_appeal: quality.commercial_appeal,
+              technical_quality: quality.technical_quality,
+              overall_score: quality.overall_score,
+            }),
             errorMessage: JSON.stringify({
               reason: "quality_gate",
               scores: quality,
@@ -180,21 +193,18 @@ export default async function execute(context: PipelineContext): Promise<StepRes
             pipelineRunId: context.pipelineRunId,
           });
 
-          // Refine prompt for next attempt
           const issues = quality.issues.join(", ");
           currentPrompt = `${concept.stylePrompt ?? concept.title}. IMPORTANT: Avoid these issues: ${issues}. ${quality.refinement_suggestion}`;
           continue;
         }
 
-        // Quality passed (or parse failed — give benefit of the doubt)
+        // Quality passed
         const [image] = await context.db.insert(generatedImages).values({
           designConceptId: concept.id,
           prompt: currentPrompt,
-          revisedPrompt: result.revisedPrompt,
-          originalUrl: result.url,
           storagePath: stored.pathname,
           storageUrl: stored.url,
-          model: "dall-e-3",
+          model: generatorName,
           size: "1024x1024",
           quality: "hd",
           attempt,
@@ -212,8 +222,6 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         }).returning();
 
         context.generatedImageIds.push(image.id);
-
-        // Update concept status
         await context.db.update(designConcepts).set({ status: "generated" }).where(eq(designConcepts.id, concept.id));
 
         imageGenerated = true;
@@ -221,11 +229,10 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         break;
       } catch (error) {
         if (attempt === maxAttempts) {
-          // Final attempt failed — record it
           await context.db.insert(generatedImages).values({
             designConceptId: concept.id,
             prompt: currentPrompt,
-            model: "dall-e-3",
+            model: generatorName,
             attempt,
             maxAttempts,
             status: "failed",
@@ -236,20 +243,19 @@ export default async function execute(context: PipelineContext): Promise<StepRes
           await context.db.update(designConcepts).set({ status: "failed" }).where(eq(designConcepts.id, concept.id));
           failed++;
         }
-        // Otherwise, retry
       }
     }
 
-    // Rate limit: DALL-E 3 allows ~5 images/minute
     if (imageGenerated) {
-      await new Promise((resolve) => setTimeout(resolve, 12000)); // 12s between images
+      // Rate limit: Flux is faster than DALL-E but still throttle
+      await new Promise((resolve) => setTimeout(resolve, useFlux ? 3000 : 12000));
     }
   }
 
   return {
     status: "completed",
-    message: `Generated ${generated} images, ${failed} failed, ${qualityRejected} quality rejections (cost: $${totalCost.toFixed(2)})`,
+    message: `Generated ${generated} images via ${generatorName}, ${failed} failed, ${qualityRejected} quality rejections (cost: $${totalCost.toFixed(2)})`,
     cost: totalCost,
-    data: { generated, failed, qualityRejected, totalCost },
+    data: { generated, failed, qualityRejected, totalCost, generator: generatorName },
   };
 }

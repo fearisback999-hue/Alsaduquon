@@ -2,6 +2,7 @@ import type { PipelineContext, StepResult } from "../context";
 import { niches, designConcepts } from "@/lib/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import { chatCompletion, StructuredOutputError } from "@/lib/ai/client";
+import { claudeCompletion } from "@/lib/ai/providers";
 import { DesignConceptsSchema } from "@/lib/ai/schemas";
 import { trackTextUsage } from "@/lib/ai/token-tracker";
 import { fullModeration } from "@/lib/ai/moderation";
@@ -89,13 +90,22 @@ Return JSON:
 }`;
 
     try {
-      const result = await chatCompletion(prompt, {
-        systemPrompt: SYSTEM_PROMPT,
-        maxTokens: 3000,
-        temperature: 0.8,
-        schema: DesignConceptsSchema,
-        schemaName: "design_concepts",
-      });
+      const useClaude = !!process.env.ANTHROPIC_API_KEY;
+
+      const result = useClaude
+        ? await claudeCompletion(prompt, {
+            systemPrompt: SYSTEM_PROMPT,
+            maxTokens: 3000,
+            temperature: 0.8,
+            schema: DesignConceptsSchema,
+          })
+        : await chatCompletion(prompt, {
+            systemPrompt: SYSTEM_PROMPT,
+            maxTokens: 3000,
+            temperature: 0.8,
+            schema: DesignConceptsSchema,
+            schemaName: "design_concepts",
+          });
 
       await trackTextUsage({
         model: result.model,
@@ -103,6 +113,7 @@ Return JSON:
         inputTokens: result.inputTokens,
         outputTokens: result.outputTokens,
         pipelineRunId: context.pipelineRunId,
+        provider: useClaude ? "anthropic" : "openai",
       });
 
       const concepts = result.parsed?.concepts ?? [];
