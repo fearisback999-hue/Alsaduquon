@@ -10,6 +10,8 @@ import * as etsy from "@/lib/external/etsy";
 import { log } from "@/lib/logger";
 import { verifyCronSecret } from "@/lib/auth/cron-auth";
 import { runRepricing } from "@/lib/pricing/optimizer";
+import { amplifyWinningNiches } from "@/lib/pipeline/winner-amplification";
+import { pruneDeadNiches } from "@/lib/pipeline/niche-pruning";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -26,6 +28,17 @@ export async function GET(request: NextRequest) {
     // Phase 1: Dynamic repricing based on listing performance metrics
     const repricingResult = await runRepricing();
     log("info", `Repricing: ${repricingResult.adjusted} adjusted (${repricingResult.raised} raised, ${repricingResult.lowered} lowered), ${repricingResult.skipped} skipped`);
+
+    // Phase 2: Amplify winning niches — re-approve niches with proven sales
+    // so the next pipeline run generates more concepts in them.
+    const amplificationResult = await amplifyWinningNiches();
+    log("info", `Amplification: re-approved ${amplificationResult.amplified} winning niches for follow-up designs`);
+
+    // Phase 3: Prune dead niches — mark niches as exhausted if they've had
+    // 3+ listings for 45+ days with zero sales and minimal engagement.
+    // Stops wasting future pipeline budget on proven losers.
+    const pruningResult = await pruneDeadNiches();
+    log("info", `Pruning: marked ${pruningResult.exhausted} niches as exhausted`);
 
     // Find underperforming listings:
     // Published 14+ days ago, has views but low conversion (<1%)
@@ -162,6 +175,8 @@ Return JSON:
       optimized,
       deactivated,
       repricing: repricingResult,
+      amplification: amplificationResult,
+      pruning: { exhausted: pruningResult.exhausted },
     });
   } catch (error) {
     log("error", "Optimization cron failed", { error: error instanceof Error ? error.message : String(error) });

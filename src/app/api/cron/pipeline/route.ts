@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { settings } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { verifyCronSecret } from "@/lib/auth/cron-auth";
+import { evaluateSeasonalUrgency } from "@/lib/pipeline/seasonal-trigger";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -20,14 +21,19 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ status: "skipped", reason: "Autopilot disabled" });
   }
 
-  // Check if this is the second daily run (2 PM UTC) and if user wants it
+  // Check if this is the second daily run (2 PM UTC) and if user wants it.
+  // Seasonal urgency overrides the runs_per_day setting during high-value
+  // prep windows (Christmas, Halloween, Mother's Day, etc.) — POD shops earn
+  // 40-60% of annual revenue during seasonal spikes.
   const currentHour = new Date().getUTCHours();
   if (currentHour >= 12) {
-    // This is the afternoon run — check pipeline_runs_per_day setting
-    const runsSetting = await db.select().from(settings).where(eq(settings.key, "pipeline_runs_per_day")).get();
-    const runsPerDay = parseInt(runsSetting?.value ?? "1") || 1;
-    if (runsPerDay < 2) {
-      return NextResponse.json({ status: "skipped", reason: "Second daily run disabled (pipeline_runs_per_day=1)" });
+    const seasonalDecision = evaluateSeasonalUrgency();
+    if (!seasonalDecision.shouldRunExtra) {
+      const runsSetting = await db.select().from(settings).where(eq(settings.key, "pipeline_runs_per_day")).get();
+      const runsPerDay = parseInt(runsSetting?.value ?? "1") || 1;
+      if (runsPerDay < 2) {
+        return NextResponse.json({ status: "skipped", reason: "Second daily run disabled (pipeline_runs_per_day=1)" });
+      }
     }
   }
 
