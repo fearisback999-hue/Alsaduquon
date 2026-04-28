@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Play,
   Pause,
@@ -39,6 +39,7 @@ interface StepLog {
   error?: string | null;
   durationMs?: number | null;
   cost?: number | null;
+  createdAt?: string;
 }
 
 interface PipelineStatus {
@@ -48,6 +49,7 @@ interface PipelineStatus {
 }
 
 const TOTAL_STEPS = 10;
+const RUNS_PAGE_SIZE = 10;
 
 function StepIcon({ status }: { status: string }) {
   switch (status) {
@@ -64,18 +66,54 @@ function StepIcon({ status }: { status: string }) {
   }
 }
 
+/**
+ * Collapses each step's started + completed log entries into a single row.
+ * Without this, a 10-step run renders as 20 list items (every step appears
+ * twice). We pick the latest status (completed/failed beats started/running)
+ * and use the completed entry's duration and cost.
+ */
+function collapseStepLogs(logs: StepLog[]): StepLog[] {
+  const byStep = new Map<number, StepLog>();
+  // Process in chronological order so terminal statuses (completed/failed)
+  // overwrite intermediate ones (started/running)
+  const sorted = [...logs].sort((a, b) => a.stepNumber - b.stepNumber || (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
+  for (const log of sorted) {
+    const existing = byStep.get(log.stepNumber);
+    if (!existing) {
+      byStep.set(log.stepNumber, log);
+      continue;
+    }
+    // Merge: prefer terminal status, prefer non-null duration/cost/summary
+    const merged: StepLog = {
+      ...existing,
+      status: isTerminal(log.status) ? log.status : (isTerminal(existing.status) ? existing.status : log.status),
+      durationMs: log.durationMs ?? existing.durationMs,
+      cost: log.cost ?? existing.cost,
+      outputSummary: log.outputSummary ?? existing.outputSummary,
+      error: log.error ?? existing.error,
+    };
+    byStep.set(log.stepNumber, merged);
+  }
+  return Array.from(byStep.values()).sort((a, b) => a.stepNumber - b.stepNumber);
+}
+
+function isTerminal(status: string): boolean {
+  return status === "completed" || status === "failed" || status === "skipped";
+}
+
 export default function PipelinePage() {
   const [data, setData] = useState<PipelineStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [triggering, setTriggering] = useState(false);
   const [autopilotEnabled, setAutopilotEnabled] = useState<boolean | null>(null);
   const [togglingAutopilot, setTogglingAutopilot] = useState(false);
+  const [runsLimit, setRunsLimit] = useState(RUNS_PAGE_SIZE);
   const toast = useToast();
 
   const loadData = useCallback(async () => {
     try {
       const [statusRes, settingsRes] = await Promise.all([
-        fetch("/api/pipeline/status"),
+        fetch(`/api/pipeline/status?runs=${runsLimit}`),
         fetch("/api/settings"),
       ]);
       if (statusRes.ok) setData(await statusRes.json());
@@ -89,9 +127,10 @@ export default function PipelinePage() {
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [toast, runsLimit]);
 
   async function triggerPipeline() {
+    if (triggering) return;
     setTriggering(true);
     try {
       const res = await fetch("/api/pipeline/trigger", {
@@ -149,8 +188,14 @@ export default function PipelinePage() {
   }, [data?.run?.status, loadData]);
 
   const run = data?.run;
-  const progressPct = run ? (run.currentStep / TOTAL_STEPS) * 100 : 0;
-  const progressTone = run?.status === "failed" ? "bg-danger" : run?.status === "running" ? "bg-brand" : "bg-success";
+  // When status is completed, show 100% — currentStep can lag at 9 if the
+  // engine increments-then-completes vs completes-then-increments
+  const effectiveStep = run?.status === "completed" ? TOTAL_STEPS : (run?.currentStep ?? 0);
+  const progressPct = run ? (effectiveStep / TOTAL_STEPS) * 100 : 0;
+  const progressTone = run?.status === "failed" ? "bg-danger" : run?.status === "completed" ? "bg-success" : "bg-brand";
+
+  const collapsedLogs = useMemo(() => collapseStepLogs(data?.logs ?? []), [data?.logs]);
+  const recentRuns = data?.recentRuns ?? [];
 
   if (loading) {
     return (
@@ -191,9 +236,9 @@ export default function PipelinePage() {
             onClick={triggerPipeline}
             disabled={triggering}
             loading={triggering}
-            leftIcon={<PlayCircle className="h-4 w-4" />}
+            leftIcon={triggering ? undefined : <PlayCircle className="h-4 w-4" />}
           >
-            Trigger run
+            {triggering ? "Running…" : "Trigger run"}
           </Button>
         </div>
       </div>
@@ -228,7 +273,7 @@ export default function PipelinePage() {
           <CardContent>
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-medium text-fg">
-                Step {run.currentStep}/{TOTAL_STEPS}
+                Step {effectiveStep}/{TOTAL_STEPS}
                 <span className="text-fg-subtle font-normal ml-2">{run.currentStepName}</span>
               </span>
               <span className="text-xs tabular-nums text-fg-subtle">{Math.round(progressPct)}%</span>
@@ -257,16 +302,16 @@ export default function PipelinePage() {
         </Card>
       )}
 
-      {/* Step timeline */}
-      {data?.logs && data.logs.length > 0 && (
+      {/* Step timeline — collapsed to one row per step */}
+      {collapsedLogs.length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle>Step timeline</CardTitle>
-            <CardDescription>Live status for each step in the current run.</CardDescription>
+            <CardDescription>One row per step ({collapsedLogs.length}/{TOTAL_STEPS}).</CardDescription>
           </CardHeader>
           <div className="px-5 pb-5">
             <ol className="relative border-l-2 border-border ml-2 space-y-1">
-              {data.logs.map((log) => (
+              {collapsedLogs.map((log) => (
                 <li key={log.id} className="pl-6 pb-3 relative">
                   <span className="absolute -left-[11px] top-0.5 h-5 w-5 rounded-full bg-surface border-2 border-border flex items-center justify-center">
                     <StepIcon status={log.status} />
@@ -287,7 +332,7 @@ export default function PipelinePage() {
                       )}
                     </div>
                     <div className="flex items-center gap-3 text-xs text-fg-subtle tabular-nums flex-shrink-0">
-                      {log.durationMs != null && (
+                      {log.durationMs != null && isTerminal(log.status) && (
                         <span className="flex items-center gap-1">
                           <Clock className="h-3 w-3" />
                           {(log.durationMs / 1000).toFixed(1)}s
@@ -296,7 +341,7 @@ export default function PipelinePage() {
                       {log.cost != null && log.cost > 0 && (
                         <span className="flex items-center gap-1">
                           <DollarSign className="h-3 w-3" />
-                          {log.cost.toFixed(3)}
+                          {log.cost.toFixed(2)}
                         </span>
                       )}
                     </div>
@@ -309,25 +354,47 @@ export default function PipelinePage() {
       )}
 
       {/* Recent runs */}
-      {data?.recentRuns && data.recentRuns.length > 0 && (
+      {recentRuns.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Recent runs</CardTitle>
-            <CardDescription>Last {data.recentRuns.length} cycles</CardDescription>
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <CardTitle>Recent runs</CardTitle>
+                <CardDescription>Last {recentRuns.length} cycle{recentRuns.length === 1 ? "" : "s"}</CardDescription>
+              </div>
+            </div>
           </CardHeader>
           <div className="divide-y divide-border">
-            {data.recentRuns.map((r) => (
-              <div key={r.id} className="px-5 py-3 flex items-center justify-between hover:bg-surface-hover transition-colors">
-                <div>
-                  <div className="text-sm text-fg">
-                    {new Date(r.createdAt).toLocaleString()}
+            {recentRuns.map((r) => {
+              const rEffectiveStep = r.status === "completed" ? TOTAL_STEPS : r.currentStep;
+              return (
+                <div key={r.id} className="px-5 py-3 flex items-center justify-between hover:bg-surface-hover transition-colors">
+                  <div>
+                    <div className="text-sm text-fg">
+                      {new Date(r.createdAt).toLocaleString()}
+                    </div>
+                    <div className="text-xs text-fg-subtle mt-0.5">
+                      Step {rEffectiveStep}/{TOTAL_STEPS} • {r.currentStepName}
+                      {r.totalCost != null && (
+                        <span className="ml-2 tabular-nums">· ${r.totalCost.toFixed(2)}</span>
+                      )}
+                    </div>
                   </div>
-                  <div className="text-xs text-fg-subtle mt-0.5">Step {r.currentStep}/{TOTAL_STEPS} • {r.currentStepName}</div>
+                  <StatusBadge status={r.status} />
                 </div>
-                <StatusBadge status={r.status} />
-              </div>
-            ))}
+              );
+            })}
           </div>
+          {recentRuns.length >= runsLimit && (
+            <div className="px-5 py-3 border-t border-border">
+              <button
+                onClick={() => setRunsLimit((n) => n + RUNS_PAGE_SIZE)}
+                className="text-xs font-medium text-brand hover:text-brand-hover transition-colors"
+              >
+                Show more
+              </button>
+            </div>
+          )}
         </Card>
       )}
     </div>

@@ -90,8 +90,12 @@ export default function ListingsPage() {
         <Card>
           <EmptyState
             icon={<ListChecks className="h-6 w-6" />}
-            title="No listings found"
-            description="Listings published by the pipeline will appear here with performance metrics."
+            title={statusFilter ? `No ${FILTERS.find((f) => f.value === statusFilter)?.label.toLowerCase() ?? statusFilter} listings` : "No listings found"}
+            description={
+              statusFilter
+                ? `No listings with status "${statusFilter}" yet. Try the All filter to see what's available.`
+                : "Listings published by the pipeline will appear here with performance metrics."
+            }
           />
         </Card>
       ) : (

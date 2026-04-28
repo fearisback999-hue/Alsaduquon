@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { dailyCosts, costEntries } from "@/lib/db/schema";
+import { dailyCosts, costEntries, settings } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
 import { BudgetExceededError, ListingLimitError } from "@/lib/errors";
 
@@ -7,15 +7,33 @@ function today(): string {
   return new Date().toISOString().split("T")[0];
 }
 
+async function readNumericSetting(key: string, fallback: number): Promise<number> {
+  const row = await db.select().from(settings).where(eq(settings.key, key)).get();
+  if (!row) return fallback;
+  const n = Number(row.value);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
 export async function getOrCreateDailyCost() {
   const date = today();
   const existing = await db.select().from(dailyCosts).where(eq(dailyCosts.date, date)).get();
   if (existing) return existing;
 
+  // Seed today's row from the user's saved settings — NOT the schema default.
+  // The schema default is only a safety net if settings haven't been seeded.
+  const [maxDailyCost, maxDailyListings] = await Promise.all([
+    readNumericSetting("max_daily_cost", 50),
+    readNumericSetting("max_daily_listings", 25),
+  ]);
+
   // Race-safe insert: if another process created the row between our check
   // and our insert (common at midnight rollover), onConflictDoNothing
   // swallows the unique-constraint error. We then re-read the existing row.
-  await db.insert(dailyCosts).values({ date }).onConflictDoNothing().run();
+  await db.insert(dailyCosts).values({
+    date,
+    maxDailyCost,
+    maxDailyListings: Math.floor(maxDailyListings),
+  }).onConflictDoNothing().run();
   const row = await db.select().from(dailyCosts).where(eq(dailyCosts.date, date)).get();
   if (!row) {
     throw new Error(`Failed to create or read daily_costs row for ${date}`);
@@ -98,7 +116,8 @@ export async function recordCost(
   });
 
   // Atomic update of daily totals
-  const isAI = category.startsWith("openai");
+  const isAI = category === "openai_text" || category === "openai_image" || category === "openai_moderation"
+    || category === "anthropic_text" || category === "replicate_image";
   const isAPI = category === "printify" || category === "trend_api";
   const isFee = category === "etsy_fee";
 

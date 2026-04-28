@@ -35,8 +35,10 @@ interface TodayEntry {
   description?: string | null;
 }
 
+interface Limits { maxDailyCost: number; maxDailyListings: number }
+
 export default function CostsPage() {
-  const [data, setData] = useState<{ dailyCosts: DailyCost[]; todayEntries: TodayEntry[]; recentTokenUsage: TokenUsage[] } | null>(null);
+  const [data, setData] = useState<{ dailyCosts: DailyCost[]; todayEntries: TodayEntry[]; recentTokenUsage: TokenUsage[]; limits: Limits } | null>(null);
   const [loading, setLoading] = useState(true);
 
   async function loadData() {
@@ -66,8 +68,13 @@ export default function CostsPage() {
   const costSpark = ordered.map((d) => d.totalCost);
   const listingsSpark = ordered.map((d) => d.listingsCreated);
 
+  // Live budget cap from settings — this is what the pipeline actually
+  // enforces against, so the UI always matches reality
+  const liveMaxCost = data.limits.maxDailyCost;
+  const liveMaxListings = data.limits.maxDailyListings;
+
   const maxCost = Math.max(...costSpark, 0.01);
-  const budgetPct = today ? (today.totalCost / Math.max(today.maxDailyCost, 0.01)) * 100 : 0;
+  const budgetPct = today ? (today.totalCost / Math.max(liveMaxCost, 0.01)) * 100 : 0;
   const budgetTone: "brand" | "warning" | "danger" = budgetPct >= 90 ? "danger" : budgetPct >= 70 ? "warning" : "brand";
 
   const aiTotal = today?.aiCost ?? 0;
@@ -87,7 +94,7 @@ export default function CostsPage() {
         <StatCard
           label="Today's Spend"
           value={`$${(today?.totalCost ?? 0).toFixed(2)}`}
-          detail={`of $${(today?.maxDailyCost ?? 10).toFixed(2)} budget`}
+          detail={`of $${liveMaxCost.toFixed(2)} budget`}
           tone={budgetTone}
           icon={<Wallet className="h-4 w-4" strokeWidth={2} />}
           sparkline={costSpark}
@@ -95,7 +102,7 @@ export default function CostsPage() {
         <StatCard
           label="Today's Listings"
           value={today?.listingsCreated ?? 0}
-          detail={`of ${today?.maxDailyListings ?? 5} limit`}
+          detail={`of ${liveMaxListings} limit`}
           tone="info"
           icon={<Layers className="h-4 w-4" strokeWidth={2} />}
           sparkline={listingsSpark}
@@ -119,17 +126,17 @@ export default function CostsPage() {
         {today && (
           <Card>
             <CardHeader>
-              <CardTitle>Today's Budget</CardTitle>
+              <CardTitle>Today&apos;s Budget</CardTitle>
               <CardDescription>Real-time spend against your daily ceiling.</CardDescription>
             </CardHeader>
             <div className="px-5 pb-5 space-y-3">
-              <Progress value={today.totalCost} max={today.maxDailyCost} tone={budgetTone} size="md" />
+              <Progress value={today.totalCost} max={liveMaxCost} tone={budgetTone} size="md" />
               <div className="flex justify-between text-xs text-fg-subtle tabular-nums">
                 <span>
                   <span className="text-fg font-medium">${today.totalCost.toFixed(2)}</span> spent
                 </span>
                 <span>
-                  ${Math.max(0, today.maxDailyCost - today.totalCost).toFixed(2)} remaining
+                  ${Math.max(0, liveMaxCost - today.totalCost).toFixed(2)} remaining
                 </span>
               </div>
             </div>

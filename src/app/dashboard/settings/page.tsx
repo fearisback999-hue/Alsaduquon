@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Check, Package, Sliders, Key, Settings as SettingsIcon, Loader2, Sparkles } from "lucide-react";
 import { PRODUCT_CONFIGS, ALL_PRODUCT_TYPES } from "@/lib/printify/product-config";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useToast } from "@/components/ui/toast";
 
 interface Setting {
   id: string;
@@ -29,6 +30,76 @@ const CATEGORIES: Record<string, string> = {
 };
 
 const CATEGORY_ORDER = ["apparel", "drinkware", "bags", "wall_art", "accessories", "home"];
+
+// Per-key UI hints — what kind of input control to render and any constraints
+interface FieldSpec {
+  control: "select" | "number" | "text" | "boolean";
+  options?: Array<{ value: string; label: string }>;
+  min?: number;
+  max?: number;
+  step?: number;
+}
+
+const FIELD_SPECS: Record<string, FieldSpec> = {
+  niche_score_threshold: { control: "number", min: 0, max: 10, step: 0.1 },
+  concepts_per_niche: { control: "number", min: 1, max: 20, step: 1 },
+  max_image_attempts: { control: "number", min: 1, max: 5, step: 1 },
+  mockups_per_product: { control: "number", min: 1, max: 20, step: 1 },
+  approval_batch_size: { control: "number", min: 1, max: 50, step: 1 },
+  approval_mode: {
+    control: "select",
+    options: [
+      { value: "manual", label: "Manual review" },
+      { value: "auto", label: "Auto-approve" },
+    ],
+  },
+  training_wheels_enabled: {
+    control: "select",
+    options: [
+      { value: "true", label: "Enabled" },
+      { value: "false", label: "Disabled" },
+    ],
+  },
+  training_wheels_min_reviews: { control: "number", min: 0, max: 500, step: 1 },
+  base_price: { control: "number", min: 1, max: 500, step: 0.5 },
+  margin_percent: { control: "number", min: 0, max: 500, step: 1 },
+  max_title_length: { control: "number", min: 20, max: 140, step: 1 },
+  max_tags: { control: "number", min: 1, max: 13, step: 1 },
+  max_daily_cost: { control: "number", min: 0.5, max: 10000, step: 0.5 },
+  max_daily_listings: { control: "number", min: 1, max: 500, step: 1 },
+  max_products_per_design: { control: "number", min: 1, max: 16, step: 1 },
+  pipeline_runs_per_day: { control: "number", min: 1, max: 4, step: 1 },
+  dalle_model: {
+    control: "select",
+    options: [
+      { value: "dall-e-3", label: "DALL-E 3" },
+      { value: "dall-e-2", label: "DALL-E 2" },
+    ],
+  },
+  dalle_quality: {
+    control: "select",
+    options: [
+      { value: "hd", label: "HD" },
+      { value: "standard", label: "Standard" },
+    ],
+  },
+  gpt_model: { control: "text" },
+  seasonal_boost_enabled: {
+    control: "select",
+    options: [
+      { value: "true", label: "Enabled" },
+      { value: "false", label: "Disabled" },
+    ],
+  },
+  autopilot_enabled: {
+    control: "select",
+    options: [
+      { value: "true", label: "Enabled" },
+      { value: "false", label: "Disabled" },
+    ],
+  },
+  annual_revenue_goal: { control: "number", min: 1000, max: 100_000_000, step: 1000 },
+};
 
 function getProductsByCategory(): Record<string, Array<{ key: string; displayName: string }>> {
   const grouped: Record<string, Array<{ key: string; displayName: string }>> = {};
@@ -63,15 +134,19 @@ export default function SettingsPage() {
   const [settings, setSettings] = useState<Setting[]>([]);
   const [editValues, setEditValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<string | null>(null);
+  const [savedFlash, setSavedFlash] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [enabledProducts, setEnabledProducts] = useState<Set<string>>(new Set());
   const [savingProducts, setSavingProducts] = useState(false);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+  const toast = useToast();
 
   const productsByCategory = getProductsByCategory();
 
-  async function loadData() {
-    setLoading(true);
+  // Loads settings WITHOUT clobbering scroll position. Settings refetch in the
+  // background after each save so the "✓ Saved" indicator can stay in place.
+  const loadData = useCallback(async (showSpinner = true) => {
+    if (showSpinner) setLoading(true);
     const res = await fetch("/api/settings");
     if (res.ok) {
       const data = await res.json();
@@ -86,58 +161,54 @@ export default function SettingsPage() {
           } catch { /* ignore */ }
         }
       }
-      setEditValues(values);
+      setEditValues((prev) => ({ ...values, ...prev }));
     }
-    setLoading(false);
-  }
+    if (showSpinner) setLoading(false);
+  }, []);
 
-  useEffect(() => { loadData(); }, []);
-
-  const NUMERIC_MIN: Record<string, number> = {
-    max_daily_listings: 1,
-    max_daily_cost: 1,
-    concepts_per_niche: 1,
-    max_products_per_design: 1,
-    pipeline_runs_per_day: 1,
-  };
-
-  function validate(key: string, value: string): string | null {
-    const min = NUMERIC_MIN[key];
-    if (min !== undefined) {
-      const n = parseFloat(value);
-      if (isNaN(n)) return "Must be a number";
-      if (n < min) return `Must be at least ${min}`;
-    }
-    return null;
-  }
+  useEffect(() => { loadData(); }, [loadData]);
 
   async function saveSetting(key: string) {
-    const err = validate(key, editValues[key] ?? "");
-    if (err) {
-      setValidationErrors({ ...validationErrors, [key]: err });
-      return;
-    }
-    setValidationErrors({ ...validationErrors, [key]: "" });
     setSaving(key);
-    await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key, value: editValues[key] }),
-    });
-    setSaving(null);
-    loadData();
+    setValidationErrors((prev) => ({ ...prev, [key]: "" }));
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key, value: editValues[key] ?? "" }),
+      });
+      if (res.ok) {
+        setSavedFlash(key);
+        setTimeout(() => setSavedFlash((curr) => (curr === key ? null : curr)), 1800);
+        // Refetch silently — don't trigger the loading skeleton or scroll reset
+        loadData(false);
+      } else {
+        const data = await res.json().catch(() => null);
+        const errMsg = data?.error ?? "Save failed";
+        setValidationErrors((prev) => ({ ...prev, [key]: errMsg }));
+        toast.error(`${key}: ${errMsg}`);
+      }
+    } catch {
+      toast.error("Network error");
+      setValidationErrors((prev) => ({ ...prev, [key]: "Network error" }));
+    } finally {
+      setSaving(null);
+    }
   }
 
   async function saveEnabledProducts(newSet: Set<string>) {
     setEnabledProducts(newSet);
     setSavingProducts(true);
     const arr = Array.from(newSet);
-    await fetch("/api/settings", {
+    const res = await fetch("/api/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ key: "enabled_product_types", value: JSON.stringify(arr) }),
     });
     setSavingProducts(false);
+    if (!res.ok) {
+      toast.error("Failed to save product types");
+    }
   }
 
   function toggleProduct(key: string) {
@@ -306,6 +377,7 @@ export default function SettingsPage() {
             const dirty = editValues[control.key] !== currentValue;
             const fieldError = validationErrors[control.key];
             const inputId = `setting-${control.key}`;
+            const spec = FIELD_SPECS[control.key];
             return (
               <div key={control.key} className="px-5 py-4 flex items-center gap-4 flex-wrap sm:flex-nowrap">
                 <div className="flex-1 min-w-0">
@@ -325,8 +397,9 @@ export default function SettingsPage() {
                     <input
                       id={inputId}
                       type="number"
-                      min="1"
-                      step={control.key === "max_daily_cost" ? "0.50" : "1"}
+                      min={spec?.min ?? 1}
+                      max={spec?.max}
+                      step={spec?.step ?? 1}
                       value={editValues[control.key] ?? ""}
                       onChange={(e) => {
                         setEditValues({ ...editValues, [control.key]: e.target.value });
@@ -343,6 +416,9 @@ export default function SettingsPage() {
                     />
                   </div>
                   <span className="text-xs text-fg-faint w-20">{control.suffix}</span>
+                  {savedFlash === control.key && (
+                    <span className="text-xs text-success font-medium animate-fade-in">✓ Saved</span>
+                  )}
                   <Button
                     size="sm"
                     onClick={() => saveSetting(control.key)}
@@ -376,7 +452,10 @@ export default function SettingsPage() {
                   method: "PUT",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ key: "seasonal_boost_enabled", value: newVal }),
-                }).then(() => loadData());
+                }).then((res) => {
+                  if (!res.ok) toast.error("Failed to update seasonal boost");
+                  loadData(false);
+                });
               }}
             />
           </div>
@@ -420,6 +499,8 @@ export default function SettingsPage() {
             <div className="divide-y divide-border">
               {groupSettings.map((setting) => {
                 const dirty = editValues[setting.key] !== setting.value;
+                const spec = FIELD_SPECS[setting.key];
+                const fieldError = validationErrors[setting.key];
                 return (
                   <div key={setting.key} className="px-5 py-4 flex items-center gap-4 flex-wrap sm:flex-nowrap">
                     <div className="flex-1 min-w-0">
@@ -427,14 +508,59 @@ export default function SettingsPage() {
                       {setting.description && (
                         <p className="text-xs text-fg-subtle mt-0.5">{setting.description}</p>
                       )}
+                      {fieldError && (
+                        <p className="text-xs text-danger mt-1">{fieldError}</p>
+                      )}
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      <input
-                        type="text"
-                        value={editValues[setting.key] ?? ""}
-                        onChange={(e) => setEditValues({ ...editValues, [setting.key]: e.target.value })}
-                        className="w-48 h-9 px-3 bg-surface border border-border rounded-lg text-sm text-fg focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/20 transition-all"
-                      />
+                      {spec?.control === "select" && spec.options ? (
+                        <select
+                          value={editValues[setting.key] ?? ""}
+                          onChange={(e) => {
+                            setEditValues({ ...editValues, [setting.key]: e.target.value });
+                            if (validationErrors[setting.key]) setValidationErrors({ ...validationErrors, [setting.key]: "" });
+                          }}
+                          className={`w-48 h-9 px-3 bg-surface border rounded-lg text-sm text-fg focus:outline-none focus:ring-2 transition-all ${
+                            fieldError ? "border-danger focus:border-danger focus:ring-danger/20" : "border-border focus:border-brand focus:ring-brand/20"
+                          }`}
+                        >
+                          {spec.options.map((opt) => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
+                        </select>
+                      ) : spec?.control === "number" ? (
+                        <input
+                          type="number"
+                          min={spec.min}
+                          max={spec.max}
+                          step={spec.step ?? 1}
+                          value={editValues[setting.key] ?? ""}
+                          onChange={(e) => {
+                            setEditValues({ ...editValues, [setting.key]: e.target.value });
+                            if (validationErrors[setting.key]) setValidationErrors({ ...validationErrors, [setting.key]: "" });
+                          }}
+                          aria-invalid={!!fieldError}
+                          className={`w-48 h-9 px-3 bg-surface border rounded-lg text-sm text-right tabular-nums text-fg focus:outline-none focus:ring-2 transition-all ${
+                            fieldError ? "border-danger focus:border-danger focus:ring-danger/20" : "border-border focus:border-brand focus:ring-brand/20"
+                          }`}
+                        />
+                      ) : (
+                        <input
+                          type="text"
+                          value={editValues[setting.key] ?? ""}
+                          onChange={(e) => {
+                            setEditValues({ ...editValues, [setting.key]: e.target.value });
+                            if (validationErrors[setting.key]) setValidationErrors({ ...validationErrors, [setting.key]: "" });
+                          }}
+                          aria-invalid={!!fieldError}
+                          className={`w-48 h-9 px-3 bg-surface border rounded-lg text-sm text-fg focus:outline-none focus:ring-2 transition-all ${
+                            fieldError ? "border-danger focus:border-danger focus:ring-danger/20" : "border-border focus:border-brand focus:ring-brand/20"
+                          }`}
+                        />
+                      )}
+                      {savedFlash === setting.key && (
+                        <span className="text-xs text-success font-medium">✓ Saved</span>
+                      )}
                       <Button
                         size="sm"
                         onClick={() => saveSetting(setting.key)}

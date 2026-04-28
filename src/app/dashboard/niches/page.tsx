@@ -218,11 +218,19 @@ export default function NichesPage() {
         <Card>
           <EmptyState
             icon={<Hash className="h-6 w-6" />}
-            title="No niches found"
+            title={
+              search
+                ? "No matches"
+                : statusFilter
+                  ? `No ${statusFilter} niches`
+                  : "No niches found"
+            }
             description={
               search
                 ? `Nothing matches "${search}". Try clearing the search.`
-                : "Run the pipeline to discover and score new niches."
+                : statusFilter
+                  ? `No niches with status "${statusFilter}" yet. Try a different filter or trigger a pipeline run.`
+                  : "Run the pipeline to discover and score new niches."
             }
           />
         </Card>

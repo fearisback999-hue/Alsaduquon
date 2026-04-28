@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { dailyCosts, costEntries, tokenUsages } from "@/lib/db/schema";
-import { desc, eq } from "drizzle-orm";
+import { dailyCosts, costEntries, tokenUsages, settings } from "@/lib/db/schema";
+import { desc, eq, inArray } from "drizzle-orm";
 import { requireSessionApi } from "@/lib/auth/require-session";
 
 export const dynamic = "force-dynamic";
@@ -35,5 +35,23 @@ export async function GET(request: NextRequest) {
     .limit(50)
     .all();
 
-  return NextResponse.json({ dailyCosts: costs, todayEntries, recentTokenUsage: recentTokens });
+  // Live settings for budget display — used as fallback when today's row
+  // doesn't exist or as the source of truth shown in the UI
+  const limitSettings = await db
+    .select()
+    .from(settings)
+    .where(inArray(settings.key, ["max_daily_cost", "max_daily_listings"]))
+    .all();
+  const settingMap: Record<string, string> = {};
+  for (const s of limitSettings) settingMap[s.key] = s.value;
+
+  return NextResponse.json({
+    dailyCosts: costs,
+    todayEntries,
+    recentTokenUsage: recentTokens,
+    limits: {
+      maxDailyCost: Number(settingMap.max_daily_cost) || 50,
+      maxDailyListings: Number(settingMap.max_daily_listings) || 25,
+    },
+  });
 }

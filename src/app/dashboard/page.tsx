@@ -25,13 +25,14 @@ export default async function DashboardPage() {
   const today = new Date().toISOString().split("T")[0];
   const sevenDaysAgo = new Date(Date.now() - 7 * 86400_000).toISOString().split("T")[0];
 
-  const [liveListings, totalOrders, todayCost, latestRun, revenueResult, enabledProductsSetting, costHistory] = await Promise.all([
+  const [liveListings, totalOrders, todayCost, latestRun, revenueResult, enabledProductsSetting, maxDailyCostSetting, costHistory] = await Promise.all([
     db.select({ count: sql<number>`count(*)` }).from(etsyListings).where(eq(etsyListings.status, "published")).get(),
     db.select({ count: sql<number>`count(*)` }).from(orders).get(),
     db.select().from(dailyCosts).where(eq(dailyCosts.date, today)).get(),
     db.select().from(pipelineRuns).orderBy(desc(pipelineRuns.createdAt)).limit(1).get(),
     db.select({ sum: sql<number>`coalesce(sum(revenue), 0)` }).from(orders).get(),
     db.select().from(settings).where(eq(settings.key, "enabled_product_types")).get(),
+    db.select().from(settings).where(eq(settings.key, "max_daily_cost")).get(),
     db
       .select({ date: dailyCosts.date, cost: dailyCosts.totalCost, listings: dailyCosts.listingsCreated })
       .from(dailyCosts)
@@ -45,10 +46,16 @@ export default async function DashboardPage() {
     try { enabledProductCount = JSON.parse(enabledProductsSetting.value).length; } catch { /* ignore */ }
   }
 
+  // Single source of truth for the budget displayed: today's row if it
+  // exists, otherwise the live setting, otherwise a sane default.
+  const settingBudget = maxDailyCostSetting ? Number(maxDailyCostSetting.value) : NaN;
+  const displayedMaxBudget = todayCost?.maxDailyCost
+    ?? (Number.isFinite(settingBudget) ? settingBudget : 50);
+
   const costSpark = costHistory.map((h) => h.cost ?? 0);
   const listingSpark = costHistory.map((h) => h.listings ?? 0);
 
-  const budgetPct = todayCost ? (todayCost.totalCost / Math.max(todayCost.maxDailyCost, 0.01)) * 100 : 0;
+  const budgetPct = todayCost ? (todayCost.totalCost / Math.max(displayedMaxBudget, 0.01)) * 100 : 0;
   const costTone: "warning" | "danger" | "brand" = budgetPct >= 90 ? "danger" : budgetPct >= 70 ? "warning" : "brand";
 
   return (
@@ -100,7 +107,7 @@ export default async function DashboardPage() {
         <StatCard
           label="Today's Spend"
           value={`$${(todayCost?.totalCost ?? 0).toFixed(2)}`}
-          detail={`$${(todayCost?.maxDailyCost ?? 10).toFixed(2)} budget`}
+          detail={`$${displayedMaxBudget.toFixed(2)} budget`}
           tone={costTone}
           icon={<Wallet className="h-4 w-4" strokeWidth={2} />}
           sparkline={costSpark}
