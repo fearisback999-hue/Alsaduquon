@@ -96,7 +96,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         continue;
       }
 
-      const seoScore = calculateSEOScore(title, description, tags);
+      const seoScore = calculateSEOScore(title, description, tags, seoHints);
       const listingFee = platform.getListingFee();
       const feeCategory = `${platform.id}_fee` as Parameters<typeof recordCost>[0];
 

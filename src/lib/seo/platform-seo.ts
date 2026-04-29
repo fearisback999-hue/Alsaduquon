@@ -140,4 +140,38 @@ Return JSON: {"tags": ["tag1", "tag2", ...]}`;
   return (result.parsed?.tags ?? []).slice(0, hints.maxTags).map((t) => t.slice(0, hints.tagMaxLength));
 }
 
-export { calculateSEOScore } from "@/lib/etsy/seo";
+export function calculateSEOScore(
+  title: string,
+  description: string,
+  tags: string[],
+  hints?: PlatformSEOHints,
+): number {
+  const maxTitle = hints?.titleMaxLength ?? 140;
+  const maxWords = hints?.descriptionMaxWords ?? 600;
+  const maxTags = hints?.maxTags ?? 13;
+
+  let score = 0;
+
+  const titleRatio = maxTitle > 0 ? title.length / maxTitle : 1;
+  if (titleRatio >= 0.7 && titleRatio <= 1.0) score += 25;
+  else if (titleRatio >= 0.4) score += 15;
+  else score += 5;
+
+  const wordCount = description.split(/\s+/).length;
+  const wordRatio = maxWords > 0 ? wordCount / maxWords : 1;
+  if (wordRatio >= 0.5 && wordRatio <= 1.0) score += 25;
+  else if (wordRatio >= 0.25) score += 15;
+  else score += 5;
+
+  if (maxTags > 0) {
+    score += Math.min(tags.length / maxTags, 1) * 25;
+  } else {
+    score += 25;
+  }
+
+  const allWords = tags.flatMap((t) => t.toLowerCase().split(/\s+/));
+  const uniqueWords = new Set(allWords).size;
+  score += Math.min(uniqueWords / 20, 1) * 25;
+
+  return Math.round(score);
+}

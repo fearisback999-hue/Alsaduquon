@@ -74,12 +74,21 @@ export async function runRepricing(): Promise<RepricingResult> {
     }
 
     try {
-      // Only call Etsy API for Etsy-platform listings
       const listingRecord = await db.select().from(listings).where(eq(listings.id, candidate.listingId)).get();
-      if (listingRecord?.platform === "etsy") {
+      if (!listingRecord) {
+        result.skipped++;
+        continue;
+      }
+
+      // Only reprice on platforms where we can sync the price externally.
+      // Currently only Etsy has a price-update API wired up.
+      if (listingRecord.platform === "etsy") {
         await etsy.updateListing(parseInt(candidate.externalListingId), {
           price: newPrice,
         });
+      } else {
+        result.skipped++;
+        continue;
       }
 
       await db

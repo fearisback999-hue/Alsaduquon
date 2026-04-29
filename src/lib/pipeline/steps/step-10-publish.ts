@@ -56,8 +56,8 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     try {
       await platform.publishListing(listing.externalListingId);
 
-      // For Printify-backed platforms, also publish on Printify
-      if (listing.printifyProductId && listing.platform !== "redbubble") {
+      const PRINTIFY_PLATFORMS = new Set(["etsy", "shopify", "tiktok", "amazon"]);
+      if (listing.printifyProductId && PRINTIFY_PLATFORMS.has(listing.platform)) {
         const product = await context.db
           .select()
           .from(printifyProducts)

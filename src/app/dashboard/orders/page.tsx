@@ -10,7 +10,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 
 interface Order {
   id: string;
-  etsyOrderId: string | null;
+  externalOrderId: string | null;
+  platform: string;
   status: string;
   quantity: number;
   revenue: number;
@@ -56,7 +57,7 @@ export default function OrdersPage() {
     <div className="space-y-6 animate-fade-in-up">
       <div className="page-header">
         <h1 className="text-2xl font-bold text-fg tracking-tight">Orders</h1>
-        <p className="text-sm text-fg-subtle mt-1">Every sale from your Etsy shop, synced hourly.</p>
+        <p className="text-sm text-fg-subtle mt-1">Every sale across all platforms, synced hourly.</p>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
@@ -92,7 +93,7 @@ export default function OrdersPage() {
           <EmptyState
             icon={<ShoppingBag className="h-6 w-6" />}
             title="No orders yet"
-            description="Once customers purchase your listings, orders will sync here from Etsy."
+            description="Once customers purchase your listings, orders will sync here."
           />
         </Card>
       ) : (
@@ -102,6 +103,7 @@ export default function OrdersPage() {
               <thead className="bg-surface-2 border-y border-border">
                 <tr className="text-left">
                   <th className="px-5 py-2.5 font-medium text-xs uppercase tracking-wide text-fg-subtle">Order ID</th>
+                  <th className="px-5 py-2.5 font-medium text-xs uppercase tracking-wide text-fg-subtle">Platform</th>
                   <th className="px-5 py-2.5 font-medium text-xs uppercase tracking-wide text-fg-subtle">Status</th>
                   <th className="px-5 py-2.5 font-medium text-xs uppercase tracking-wide text-fg-subtle text-right tabular-nums">Qty</th>
                   <th className="px-5 py-2.5 font-medium text-xs uppercase tracking-wide text-fg-subtle text-right tabular-nums">Revenue</th>
@@ -115,7 +117,8 @@ export default function OrdersPage() {
                   const profit = order.profit ?? 0;
                   return (
                     <tr key={order.id} className="hover:bg-surface-hover transition-colors">
-                      <td className="px-5 py-3 font-mono text-xs text-fg">{order.etsyOrderId ?? order.id.slice(0, 8)}</td>
+                      <td className="px-5 py-3 font-mono text-xs text-fg">{order.externalOrderId ?? order.id.slice(0, 8)}</td>
+                      <td className="px-5 py-3 text-xs text-fg-muted capitalize">{order.platform}</td>
                       <td className="px-5 py-3"><StatusBadge status={order.status} /></td>
                       <td className="px-5 py-3 text-right tabular-nums text-fg-muted">{order.quantity}</td>
                       <td className="px-5 py-3 text-right tabular-nums font-medium text-fg">${order.revenue.toFixed(2)}</td>
