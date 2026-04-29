@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { approvalQueueEntries, etsyListings, printifyProducts, mockups, designConcepts, niches } from "@/lib/db/schema";
+import { approvalQueueEntries, listings, printifyProducts, mockups, designConcepts, niches } from "@/lib/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import { requireSessionApi } from "@/lib/auth/require-session";
 
@@ -12,14 +12,14 @@ export async function GET() {
   const rows = await db
     .select({
       entry: approvalQueueEntries,
-      listing: etsyListings,
+      listing: listings,
       product: printifyProducts,
       concept: designConcepts,
       niche: niches,
     })
     .from(approvalQueueEntries)
-    .leftJoin(etsyListings, eq(approvalQueueEntries.etsyListingId, etsyListings.id))
-    .leftJoin(printifyProducts, eq(etsyListings.printifyProductId, printifyProducts.id))
+    .leftJoin(listings, eq(approvalQueueEntries.listingId, listings.id))
+    .leftJoin(printifyProducts, eq(listings.printifyProductId, printifyProducts.id))
     .leftJoin(designConcepts, eq(printifyProducts.designConceptId, designConcepts.id))
     .leftJoin(niches, eq(designConcepts.nicheId, niches.id))
     .where(eq(approvalQueueEntries.status, "pending"))

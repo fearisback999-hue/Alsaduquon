@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { etsyListings, orders } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { listings, orders } from "@/lib/db/schema";
+import { eq, and } from "drizzle-orm";
 import * as etsy from "@/lib/external/etsy";
 import { estimateProfit } from "@/lib/etsy/pricing";
 import { log } from "@/lib/logger";
@@ -24,13 +24,13 @@ export async function GET(request: NextRequest) {
 
     for (const receipt of receipts.results) {
       for (const transaction of receipt.transactions) {
-        const etsyListingId = String(transaction.listing_id);
+        const externalListingId = String(transaction.listing_id);
 
-        // Find our listing record
+        // Find our listing record (Etsy-specific sync)
         const listing = await db
           .select()
-          .from(etsyListings)
-          .where(eq(etsyListings.etsyListingId, etsyListingId))
+          .from(listings)
+          .where(and(eq(listings.externalListingId, externalListingId), eq(listings.platform, "etsy")))
           .get();
 
         if (!listing) {
@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
         const existingOrder = await db
           .select()
           .from(orders)
-          .where(eq(orders.etsyOrderId, String(receipt.receipt_id)))
+          .where(eq(orders.externalOrderId, String(receipt.receipt_id)))
           .get();
 
         if (existingOrder) {
@@ -54,8 +54,9 @@ export async function GET(request: NextRequest) {
         const profitCalc = estimateProfit(revenue, listing.basePrice, transaction.quantity);
 
         await db.insert(orders).values({
-          etsyListingId: listing.id,
-          etsyOrderId: String(receipt.receipt_id),
+          listingId: listing.id,
+          externalOrderId: String(receipt.receipt_id),
+          platform: "etsy",
           status: receipt.status === "paid" ? "processing" as const : "new" as const,
           quantity: transaction.quantity,
           revenue: profitCalc.revenue,

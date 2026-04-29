@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { dailyAnalytics, nicheAnalytics, niches, etsyListings, orders } from "@/lib/db/schema";
+import { dailyAnalytics, nicheAnalytics, niches, listings, orders } from "@/lib/db/schema";
 import { desc, eq, sql } from "drizzle-orm";
 import { requireSessionApi } from "@/lib/auth/require-session";
 
@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
     .all();
 
   // Summary stats
-  const totalListings = await db.select({ count: sql<number>`count(*)` }).from(etsyListings).where(eq(etsyListings.status, "published")).get();
+  const totalListings = await db.select({ count: sql<number>`count(*)` }).from(listings).where(eq(listings.status, "published")).get();
   const totalOrders = await db.select({ count: sql<number>`count(*)` }).from(orders).get();
   const totalRevenue = await db.select({ sum: sql<number>`coalesce(sum(revenue), 0)` }).from(orders).get();
   const totalProfit = await db.select({ sum: sql<number>`coalesce(sum(profit), 0)` }).from(orders).get();

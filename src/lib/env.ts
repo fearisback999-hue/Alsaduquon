@@ -15,6 +15,31 @@ const envSchema = z.object({
   BLOB_READ_WRITE_TOKEN: z.string().optional(),
   PODCS_API_KEY: z.string().optional(),
   FLYING_RESEARCH_API_KEY: z.string().optional(),
+
+  // Shopify
+  SHOPIFY_STORE_URL: z.string().optional(),
+  SHOPIFY_ACCESS_TOKEN: z.string().optional(),
+
+  // TikTok Shop
+  TIKTOK_SHOP_APP_KEY: z.string().optional(),
+  TIKTOK_SHOP_APP_SECRET: z.string().optional(),
+  TIKTOK_SHOP_ACCESS_TOKEN: z.string().optional(),
+
+  // Depop
+  DEPOP_CLIENT_ID: z.string().optional(),
+  DEPOP_CLIENT_SECRET: z.string().optional(),
+  DEPOP_ACCESS_TOKEN: z.string().optional(),
+
+  // Redbubble
+  REDBUBBLE_API_KEY: z.string().optional(),
+  REDBUBBLE_ACCOUNT_ID: z.string().optional(),
+
+  // Amazon SP-API
+  AMAZON_SELLER_ID: z.string().optional(),
+  AMAZON_MWS_ACCESS_KEY: z.string().optional(),
+  AMAZON_MWS_SECRET_KEY: z.string().optional(),
+  AMAZON_REFRESH_TOKEN: z.string().optional(),
+  AMAZON_MARKETPLACE_ID: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

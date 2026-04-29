@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { approvalQueueEntries, etsyListings, printifyProducts, mockups, designConcepts, niches, generatedImages } from "@/lib/db/schema";
+import { approvalQueueEntries, listings, printifyProducts, mockups, designConcepts, niches, generatedImages } from "@/lib/db/schema";
 import { eq, and, gte, inArray, desc } from "drizzle-orm";
 import { requireSessionApi } from "@/lib/auth/require-session";
 import * as etsy from "@/lib/external/etsy";
+import { getPlatform } from "@/lib/platforms/registry";
 import { log } from "@/lib/logger";
 import { z } from "zod";
 
@@ -25,14 +26,14 @@ export async function GET(request: NextRequest) {
   const rows = await db
     .select({
       entry: approvalQueueEntries,
-      listing: etsyListings,
+      listing: listings,
       product: printifyProducts,
       concept: designConcepts,
       niche: niches,
     })
     .from(approvalQueueEntries)
-    .leftJoin(etsyListings, eq(approvalQueueEntries.etsyListingId, etsyListings.id))
-    .leftJoin(printifyProducts, eq(etsyListings.printifyProductId, printifyProducts.id))
+    .leftJoin(listings, eq(approvalQueueEntries.listingId, listings.id))
+    .leftJoin(printifyProducts, eq(listings.printifyProductId, printifyProducts.id))
     .leftJoin(designConcepts, eq(printifyProducts.designConceptId, designConcepts.id))
     .leftJoin(niches, eq(designConcepts.nicheId, niches.id))
     .where(
@@ -119,21 +120,28 @@ export async function POST(request: NextRequest) {
   const entry = await db.select().from(approvalQueueEntries).where(eq(approvalQueueEntries.id, entryId)).get();
   if (!entry) return NextResponse.json({ error: "Entry not found" }, { status: 404 });
 
-  const listing = await db.select().from(etsyListings).where(eq(etsyListings.id, entry.etsyListingId)).get();
+  const listing = await db.select().from(listings).where(eq(listings.id, entry.listingId)).get();
   if (!listing) return NextResponse.json({ error: "Listing not found" }, { status: 404 });
 
-  let etsyDeactivated = false;
-  if (listing.status === "published" && listing.etsyListingId) {
+  let platformDeactivated = false;
+  if (listing.status === "published" && listing.externalListingId) {
     try {
-      await etsy.updateListing(parseInt(listing.etsyListingId), { state: "inactive" });
-      etsyDeactivated = true;
-      log("info", `Retroactively deactivated published listing on Etsy: "${listing.title}"`);
+      if (listing.platform === "etsy") {
+        await etsy.updateListing(parseInt(listing.externalListingId), { state: "inactive" });
+      } else {
+        const platform = getPlatform(listing.platform);
+        if (platform) {
+          await platform.deactivateListing(listing.externalListingId);
+        }
+      }
+      platformDeactivated = true;
+      log("info", `Retroactively deactivated published listing on ${listing.platform}: "${listing.title}"`);
     } catch (err) {
-      log("error", `Failed to deactivate listing on Etsy: ${listing.title}`, {
+      log("error", `Failed to deactivate listing on ${listing.platform}: ${listing.title}`, {
         error: err instanceof Error ? err.message : String(err),
       });
       return NextResponse.json(
-        { error: "Failed to deactivate on Etsy", details: err instanceof Error ? err.message : String(err) },
+        { error: `Failed to deactivate on ${listing.platform}`, details: err instanceof Error ? err.message : String(err) },
         { status: 502 },
       );
     }
@@ -142,14 +150,14 @@ export async function POST(request: NextRequest) {
   const now = new Date().toISOString();
   await db.update(approvalQueueEntries).set({
     status: "rejected",
-    feedback: `[Retroactive reject${etsyDeactivated ? ", deactivated on Etsy" : ""}] ${reason ?? ""}`.trim(),
+    feedback: `[Retroactive reject${platformDeactivated ? `, deactivated on ${listing.platform}` : ""}] ${reason ?? ""}`.trim(),
     updatedAt: now,
   }).where(eq(approvalQueueEntries.id, entryId));
 
-  await db.update(etsyListings).set({
-    status: etsyDeactivated ? "deactivated" : "rejected",
+  await db.update(listings).set({
+    status: platformDeactivated ? "deactivated" : "rejected",
     updatedAt: now,
-  }).where(eq(etsyListings.id, listing.id));
+  }).where(eq(listings.id, listing.id));
 
-  return NextResponse.json({ success: true, etsyDeactivated });
+  return NextResponse.json({ success: true, platformDeactivated });
 }

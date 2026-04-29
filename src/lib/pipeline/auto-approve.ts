@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { etsyListings, printifyProducts, designConcepts, niches, nicheAnalytics, listingMetrics, generatedImages, settings, approvalQueueEntries } from "@/lib/db/schema";
+import { listings, printifyProducts, designConcepts, niches, nicheAnalytics, listingMetrics, generatedImages, settings, approvalQueueEntries } from "@/lib/db/schema";
 import { eq, sql, and } from "drizzle-orm";
 import { log } from "@/lib/logger";
 
@@ -65,9 +65,10 @@ export async function evaluateForAutoApproval(listingId: string): Promise<AutoAp
   const reasons: string[] = [];
   let confidence = 0;
 
-  const listing = await db.select().from(etsyListings).where(eq(etsyListings.id, listingId)).get();
+  const listing = await db.select().from(listings).where(eq(listings.id, listingId)).get();
   if (!listing) return { approved: false, confidence: 0, reasons: ["listing not found"] };
 
+  if (!listing.printifyProductId) return { approved: false, confidence: 0, reasons: ["no linked product"] };
   const product = await db.select().from(printifyProducts).where(eq(printifyProducts.id, listing.printifyProductId)).get();
   if (!product) return { approved: false, confidence: 0, reasons: ["product not found"] };
 
@@ -172,11 +173,11 @@ export async function evaluateForAutoApproval(listingId: string): Promise<AutoAp
 
   // 3. Design type has history of selling (check any design of same type in this niche)
   const sameTypeOrders = await db
-    .select({ count: sql<number>`count(distinct ${etsyListings.id})` })
+    .select({ count: sql<number>`count(distinct ${listings.id})` })
     .from(designConcepts)
     .innerJoin(printifyProducts, eq(printifyProducts.designConceptId, designConcepts.id))
-    .innerJoin(etsyListings, eq(etsyListings.printifyProductId, printifyProducts.id))
-    .innerJoin(listingMetrics, eq(listingMetrics.etsyListingId, etsyListings.id))
+    .innerJoin(listings, eq(listings.printifyProductId, printifyProducts.id))
+    .innerJoin(listingMetrics, eq(listingMetrics.listingId, listings.id))
     .where(eq(designConcepts.designType, concept.designType ?? "hybrid"))
     .get();
 

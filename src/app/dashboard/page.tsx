@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
-import { etsyListings, orders, dailyCosts, pipelineRuns, settings } from "@/lib/db/schema";
+import { listings, orders, dailyCosts, pipelineRuns, settings } from "@/lib/db/schema";
 import { eq, desc, sql, gte } from "drizzle-orm";
 import { StatCard } from "@/components/ui/stat-card";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -26,7 +26,7 @@ export default async function DashboardPage() {
   const sevenDaysAgo = new Date(Date.now() - 7 * 86400_000).toISOString().split("T")[0];
 
   const [liveListings, totalOrders, todayCost, latestRun, revenueResult, enabledProductsSetting, maxDailyCostSetting, costHistory] = await Promise.all([
-    db.select({ count: sql<number>`count(*)` }).from(etsyListings).where(eq(etsyListings.status, "published")).get(),
+    db.select({ count: sql<number>`count(*)` }).from(listings).where(eq(listings.status, "published")).get(),
     db.select({ count: sql<number>`count(*)` }).from(orders).get(),
     db.select().from(dailyCosts).where(eq(dailyCosts.date, today)).get(),
     db.select().from(pipelineRuns).orderBy(desc(pipelineRuns.createdAt)).limit(1).get(),

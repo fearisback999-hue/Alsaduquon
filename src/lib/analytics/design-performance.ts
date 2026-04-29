@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import {
   orders,
-  etsyListings,
+  listings,
   printifyProducts,
   designConcepts,
   niches,
@@ -65,9 +65,9 @@ export async function getDesignPerformance(limit = 50): Promise<DesignPerformanc
       .from(designConcepts)
       .innerJoin(niches, eq(designConcepts.nicheId, niches.id))
       .innerJoin(printifyProducts, eq(printifyProducts.designConceptId, designConcepts.id))
-      .leftJoin(etsyListings, eq(etsyListings.printifyProductId, printifyProducts.id))
-      .leftJoin(orders, eq(orders.etsyListingId, etsyListings.id))
-      .leftJoin(listingMetrics, eq(listingMetrics.etsyListingId, etsyListings.id))
+      .leftJoin(listings, eq(listings.printifyProductId, printifyProducts.id))
+      .leftJoin(orders, eq(orders.listingId, listings.id))
+      .leftJoin(listingMetrics, eq(listingMetrics.listingId, listings.id))
       .where(eq(designConcepts.status, "generated"))
       .groupBy(designConcepts.id, printifyProducts.productType)
       .orderBy(desc(sql`count(distinct ${orders.id})`))
@@ -123,9 +123,9 @@ export async function getNicheVelocity(): Promise<NicheVelocity[]> {
       .from(niches)
       .innerJoin(designConcepts, eq(designConcepts.nicheId, niches.id))
       .innerJoin(printifyProducts, eq(printifyProducts.designConceptId, designConcepts.id))
-      .innerJoin(etsyListings, eq(etsyListings.printifyProductId, printifyProducts.id))
-      .leftJoin(orders, eq(orders.etsyListingId, etsyListings.id))
-      .where(eq(etsyListings.status, "published"))
+      .innerJoin(listings, eq(listings.printifyProductId, printifyProducts.id))
+      .leftJoin(orders, eq(orders.listingId, listings.id))
+      .where(eq(listings.status, "published"))
       .groupBy(niches.id)
       .all();
 
@@ -178,10 +178,10 @@ export async function getProductTypePerformanceByNiche(): Promise<ProductTypePer
       .from(printifyProducts)
       .innerJoin(designConcepts, eq(printifyProducts.designConceptId, designConcepts.id))
       .innerJoin(niches, eq(designConcepts.nicheId, niches.id))
-      .innerJoin(etsyListings, eq(etsyListings.printifyProductId, printifyProducts.id))
-      .leftJoin(orders, eq(orders.etsyListingId, etsyListings.id))
-      .leftJoin(listingMetrics, eq(listingMetrics.etsyListingId, etsyListings.id))
-      .where(eq(etsyListings.status, "published"))
+      .innerJoin(listings, eq(listings.printifyProductId, printifyProducts.id))
+      .leftJoin(orders, eq(orders.listingId, listings.id))
+      .leftJoin(listingMetrics, eq(listingMetrics.listingId, listings.id))
+      .where(eq(listings.status, "published"))
       .groupBy(printifyProducts.productType, niches.name)
       .orderBy(desc(sql`count(distinct ${orders.id})`))
       .all();

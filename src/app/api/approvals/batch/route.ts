@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { approvalQueueEntries, etsyListings } from "@/lib/db/schema";
+import { approvalQueueEntries, listings } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { runPipeline } from "@/lib/pipeline/engine";
 import { acquireLock, findResumableRun } from "@/lib/pipeline/concurrency";
@@ -51,10 +51,10 @@ export async function POST(request: NextRequest) {
     // Update corresponding listing status
     const entry = await db.select().from(approvalQueueEntries).where(eq(approvalQueueEntries.id, id)).get();
     if (entry) {
-      await db.update(etsyListings).set({
+      await db.update(listings).set({
         status: action === "approved" ? "approved" : "rejected",
         updatedAt: new Date().toISOString(),
-      }).where(eq(etsyListings.id, entry.etsyListingId));
+      }).where(eq(listings.id, entry.listingId));
     }
 
     if (action === "approved") approved++;

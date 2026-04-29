@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { ListChecks, ExternalLink, AlertTriangle, Filter, TrendingUp } from "lucide-react";
+import { ListChecks, ExternalLink, AlertTriangle, Filter, TrendingUp, Store, ShoppingBag, Play, Shirt, Palette, Package } from "lucide-react";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -12,10 +12,11 @@ import { useApiData } from "@/lib/hooks/use-api-data";
 
 interface Listing {
   id: string;
+  platform: string;
   title: string;
   status: string;
   finalPrice: number;
-  etsyUrl: string | null;
+  externalUrl: string | null;
   seoScore: number | null;
   publishedAt: string | null;
   createdAt: string;
@@ -26,7 +27,7 @@ interface Listing {
   conversionRate: number | null;
 }
 
-const FILTERS = [
+const STATUS_FILTERS = [
   { value: "", label: "All" },
   { value: "published", label: "Published" },
   { value: "pending_approval", label: "Pending" },
@@ -35,13 +36,55 @@ const FILTERS = [
   { value: "rejected", label: "Rejected" },
 ];
 
+const PLATFORM_FILTERS = [
+  { value: "", label: "All Platforms" },
+  { value: "etsy", label: "Etsy" },
+  { value: "shopify", label: "Shopify" },
+  { value: "tiktok", label: "TikTok" },
+  { value: "depop", label: "Depop" },
+  { value: "redbubble", label: "Redbubble" },
+  { value: "amazon", label: "Amazon" },
+];
+
+const PLATFORM_ICONS: Record<string, React.ReactNode> = {
+  etsy: <Package className="h-3.5 w-3.5" />,
+  shopify: <Store className="h-3.5 w-3.5" />,
+  tiktok: <Play className="h-3.5 w-3.5" />,
+  depop: <Shirt className="h-3.5 w-3.5" />,
+  redbubble: <Palette className="h-3.5 w-3.5" />,
+  amazon: <ShoppingBag className="h-3.5 w-3.5" />,
+};
+
+const PLATFORM_COLORS: Record<string, string> = {
+  etsy: "text-orange-600 bg-orange-50",
+  shopify: "text-green-600 bg-green-50",
+  tiktok: "text-pink-500 bg-pink-50",
+  depop: "text-red-500 bg-red-50",
+  redbubble: "text-red-600 bg-red-50",
+  amazon: "text-yellow-600 bg-yellow-50",
+};
+
+function PlatformBadge({ platform }: { platform: string }) {
+  const icon = PLATFORM_ICONS[platform];
+  const color = PLATFORM_COLORS[platform] ?? "text-fg-muted bg-surface-2";
+  const label = PLATFORM_FILTERS.find(f => f.value === platform)?.label ?? platform;
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide ${color}`}>
+      {icon}
+      {label}
+    </span>
+  );
+}
+
 const LIMIT = 50;
 
 export default function ListingsPage() {
   const [statusFilter, setStatusFilter] = useState("");
+  const [platformFilter, setPlatformFilter] = useState("");
   const url = `/api/listings?${new URLSearchParams({
     limit: String(LIMIT),
     ...(statusFilter ? { status: statusFilter } : {}),
+    ...(platformFilter ? { platform: platformFilter } : {}),
   })}`;
   const { data, loading, error, refetch } = useApiData<{ listings: Listing[] }>(url);
   const listings = useMemo(() => data?.listings ?? [], [data]);
@@ -63,10 +106,10 @@ export default function ListingsPage() {
         </div>
       </div>
 
-      {/* Filter pills */}
+      {/* Status filter pills */}
       <div className="flex items-center gap-1.5 flex-wrap" role="group" aria-label="Filter by status">
         <Filter className="h-3.5 w-3.5 text-fg-faint" aria-hidden />
-        {FILTERS.map((f) => (
+        {STATUS_FILTERS.map((f) => (
           <button
             key={f.value}
             onClick={() => setStatusFilter(f.value)}
@@ -82,6 +125,25 @@ export default function ListingsPage() {
         ))}
       </div>
 
+      {/* Platform filter pills */}
+      <div className="flex items-center gap-1.5 flex-wrap" role="group" aria-label="Filter by platform">
+        {PLATFORM_FILTERS.map((f) => (
+          <button
+            key={f.value}
+            onClick={() => setPlatformFilter(f.value)}
+            aria-pressed={platformFilter === f.value}
+            className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
+              platformFilter === f.value
+                ? "bg-brand text-brand-fg"
+                : "bg-surface-2 text-fg-muted hover:bg-surface-hover hover:text-fg"
+            }`}
+          >
+            {f.value && PLATFORM_ICONS[f.value] && <span className="mr-1 inline-flex">{PLATFORM_ICONS[f.value]}</span>}
+            {f.label}
+          </button>
+        ))}
+      </div>
+
       {error ? (
         <ErrorState message={error} onRetry={refetch} retrying={loading} />
       ) : loading ? (
@@ -90,10 +152,10 @@ export default function ListingsPage() {
         <Card>
           <EmptyState
             icon={<ListChecks className="h-6 w-6" />}
-            title={statusFilter ? `No ${FILTERS.find((f) => f.value === statusFilter)?.label.toLowerCase() ?? statusFilter} listings` : "No listings found"}
+            title={statusFilter || platformFilter ? "No matching listings" : "No listings found"}
             description={
-              statusFilter
-                ? `No listings with status "${statusFilter}" yet. Try the All filter to see what's available.`
+              statusFilter || platformFilter
+                ? "Try adjusting your filters to see more listings."
                 : "Listings published by the pipeline will appear here with performance metrics."
             }
           />
@@ -105,6 +167,7 @@ export default function ListingsPage() {
               <thead className="bg-surface-2 border-y border-border">
                 <tr className="text-left">
                   <th className="px-5 py-2.5 font-medium text-xs uppercase tracking-wide text-fg-subtle">Title</th>
+                  <th className="px-5 py-2.5 font-medium text-xs uppercase tracking-wide text-fg-subtle">Platform</th>
                   <th className="px-5 py-2.5 font-medium text-xs uppercase tracking-wide text-fg-subtle">Product</th>
                   <th className="px-5 py-2.5 font-medium text-xs uppercase tracking-wide text-fg-subtle">Status</th>
                   <th className="px-5 py-2.5 font-medium text-xs uppercase tracking-wide text-fg-subtle text-right tabular-nums">Price</th>
@@ -139,6 +202,9 @@ export default function ListingsPage() {
                           <div className="text-[10px] text-fg-faint mt-0.5">SEO {listing.seoScore}/100</div>
                         )}
                       </td>
+                      <td className="px-5 py-3">
+                        <PlatformBadge platform={listing.platform} />
+                      </td>
                       <td className="px-5 py-3 text-fg-muted text-xs">
                         {listing.productType ? getProductDisplayName(listing.productType) : "—"}
                       </td>
@@ -162,9 +228,9 @@ export default function ListingsPage() {
                         )}
                       </td>
                       <td className="px-5 py-3 text-right">
-                        {listing.etsyUrl ? (
+                        {listing.externalUrl ? (
                           <a
-                            href={listing.etsyUrl}
+                            href={listing.externalUrl}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="inline-flex items-center gap-1 text-brand hover:text-brand-hover text-xs font-medium transition-colors"

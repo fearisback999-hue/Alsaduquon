@@ -195,24 +195,25 @@ export const mockups = sqliteTable("mockups", {
 }));
 
 // ============================================================
-// STEP 8: ETSY LISTINGS
+// STEP 8: LISTINGS (multi-platform)
 // ============================================================
 
-export const etsyListings = sqliteTable("etsy_listings", {
+export const listings = sqliteTable("listings", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  printifyProductId: text("printify_product_id").notNull().references(() => printifyProducts.id, { onDelete: "cascade" }),
-  etsyListingId: text("etsy_listing_id"), // External Etsy ID
-  title: text("title").notNull(), // max 140 chars
+  platform: text("platform", { enum: ["etsy", "shopify", "tiktok", "depop", "redbubble", "amazon"] }).notNull().default("etsy"),
+  printifyProductId: text("printify_product_id").references(() => printifyProducts.id, { onDelete: "cascade" }),
+  externalListingId: text("external_listing_id"),
+  title: text("title").notNull(),
   description: text("description").notNull(),
-  tags: text("tags").notNull(), // JSON array, max 13
+  tags: text("tags").notNull(), // JSON array
   materials: text("materials"), // JSON array
   seoScore: real("seo_score"),
   basePrice: real("base_price").notNull().default(25),
   marginPercent: real("margin_percent").notNull().default(40),
   finalPrice: real("final_price").notNull().default(35),
   shippingPrice: real("shipping_price").default(0),
-  etsyState: text("etsy_state", { enum: ["draft", "active", "inactive", "expired", "sold_out"] }).default("draft"),
-  etsyUrl: text("etsy_url"),
+  externalState: text("external_state").default("draft"),
+  externalUrl: text("external_url"),
   status: text("status", { enum: ["draft", "pending_approval", "approved", "rejected", "published", "deactivated"] }).notNull().default("draft"),
   moderationResult: text("moderation_result"), // JSON
   pipelineRunId: text("pipeline_run_id").references(() => pipelineRuns.id),
@@ -220,9 +221,10 @@ export const etsyListings = sqliteTable("etsy_listings", {
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
   updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
 }, (table) => ({
-  statusIdx: index("listings_status_idx").on(table.status),
-  etsyIdx: uniqueIndex("listings_etsy_idx").on(table.etsyListingId),
-  productIdx: index("listings_product_idx").on(table.printifyProductId),
+  statusIdx: index("listings_v2_status_idx").on(table.status),
+  platformIdx: index("listings_v2_platform_idx").on(table.platform),
+  externalIdx: index("listings_v2_external_idx").on(table.platform, table.externalListingId),
+  productIdx: index("listings_v2_product_idx").on(table.printifyProductId),
 }));
 
 // ============================================================
@@ -231,7 +233,7 @@ export const etsyListings = sqliteTable("etsy_listings", {
 
 export const approvalQueueEntries = sqliteTable("approval_queue_entries", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  etsyListingId: text("etsy_listing_id").notNull().references(() => etsyListings.id, { onDelete: "cascade" }),
+  listingId: text("listing_id").notNull().references(() => listings.id, { onDelete: "cascade" }),
   batchNumber: integer("batch_number"),
   batchOrder: integer("batch_order"),
   mode: text("mode", { enum: ["manual", "auto"] }).notNull().default("manual"),
@@ -253,9 +255,11 @@ export const approvalQueueEntries = sqliteTable("approval_queue_entries", {
 
 export const orders = sqliteTable("orders", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  etsyListingId: text("etsy_listing_id").notNull().references(() => etsyListings.id),
-  etsyOrderId: text("etsy_order_id"),
+  listingId: text("listing_id").notNull().references(() => listings.id),
+  platform: text("platform", { enum: ["etsy", "shopify", "tiktok", "depop", "redbubble", "amazon"] }).notNull().default("etsy"),
+  externalOrderId: text("external_order_id"),
   printifyOrderId: text("printify_order_id"),
+  externalData: text("external_data"), // JSON: platform-specific order data
   customerRegion: text("customer_region"),
   status: text("status", { enum: ["new", "processing", "shipped", "delivered", "cancelled", "refunded"] }).notNull().default("new"),
   quantity: integer("quantity").notNull().default(1),
@@ -271,8 +275,9 @@ export const orders = sqliteTable("orders", {
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
   updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
 }, (table) => ({
-  etsyIdx: uniqueIndex("orders_etsy_idx").on(table.etsyOrderId),
+  externalIdx: uniqueIndex("orders_external_idx").on(table.platform, table.externalOrderId),
   statusIdx: index("orders_status_idx").on(table.status),
+  listingIdx: index("orders_listing_idx").on(table.listingId),
 }));
 
 // ============================================================
@@ -298,7 +303,7 @@ export const dailyCosts = sqliteTable("daily_costs", {
 export const costEntries = sqliteTable("cost_entries", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   date: text("date").notNull(), // YYYY-MM-DD
-  category: text("category", { enum: ["openai_text", "openai_image", "openai_moderation", "anthropic_text", "replicate_image", "printify", "etsy_fee", "trend_api", "other"] }).notNull(),
+  category: text("category", { enum: ["openai_text", "openai_image", "openai_moderation", "anthropic_text", "replicate_image", "printify", "etsy_fee", "shopify_fee", "tiktok_fee", "depop_fee", "redbubble_fee", "amazon_fee", "trend_api", "other"] }).notNull(),
   modelName: text("model_name"),
   amount: real("amount").notNull(),
   description: text("description"),
@@ -380,7 +385,7 @@ export const dailyAnalytics = sqliteTable("daily_analytics", {
 
 export const listingMetrics = sqliteTable("listing_metrics", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  etsyListingId: text("etsy_listing_id").notNull().references(() => etsyListings.id, { onDelete: "cascade" }),
+  listingId: text("listing_id").notNull().references(() => listings.id, { onDelete: "cascade" }),
   views: integer("views").notNull().default(0),
   favorites: integer("favorites").notNull().default(0),
   sales: integer("sales").notNull().default(0),
@@ -388,7 +393,7 @@ export const listingMetrics = sqliteTable("listing_metrics", {
   revenue: real("revenue").default(0),
   syncedAt: text("synced_at").notNull().$defaultFn(() => new Date().toISOString()),
 }, (table) => ({
-  listingIdx: uniqueIndex("listing_metrics_listing_idx").on(table.etsyListingId),
+  listingIdx: uniqueIndex("listing_metrics_listing_idx").on(table.listingId),
 }));
 
 // ============================================================
@@ -468,28 +473,28 @@ export const printifyProductsRelations = relations(printifyProducts, ({ one, man
   designConcept: one(designConcepts, { fields: [printifyProducts.designConceptId], references: [designConcepts.id] }),
   generatedImage: one(generatedImages, { fields: [printifyProducts.generatedImageId], references: [generatedImages.id] }),
   mockups: many(mockups),
-  etsyListing: one(etsyListings),
+  listings: many(listings),
 }));
 
 export const mockupsRelations = relations(mockups, ({ one }) => ({
   product: one(printifyProducts, { fields: [mockups.printifyProductId], references: [printifyProducts.id] }),
 }));
 
-export const etsyListingsRelations = relations(etsyListings, ({ one, many }) => ({
-  product: one(printifyProducts, { fields: [etsyListings.printifyProductId], references: [printifyProducts.id] }),
+export const listingsRelations = relations(listings, ({ one, many }) => ({
+  product: one(printifyProducts, { fields: [listings.printifyProductId], references: [printifyProducts.id] }),
   approvalEntry: one(approvalQueueEntries),
   orders: many(orders),
   metrics: one(listingMetrics),
 }));
 
 export const listingMetricsRelations = relations(listingMetrics, ({ one }) => ({
-  etsyListing: one(etsyListings, { fields: [listingMetrics.etsyListingId], references: [etsyListings.id] }),
+  listing: one(listings, { fields: [listingMetrics.listingId], references: [listings.id] }),
 }));
 
 export const approvalQueueEntriesRelations = relations(approvalQueueEntries, ({ one }) => ({
-  etsyListing: one(etsyListings, { fields: [approvalQueueEntries.etsyListingId], references: [etsyListings.id] }),
+  listing: one(listings, { fields: [approvalQueueEntries.listingId], references: [listings.id] }),
 }));
 
 export const ordersRelations = relations(orders, ({ one }) => ({
-  etsyListing: one(etsyListings, { fields: [orders.etsyListingId], references: [etsyListings.id] }),
+  listing: one(listings, { fields: [orders.listingId], references: [listings.id] }),
 }));

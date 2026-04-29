@@ -6,6 +6,11 @@ interface RateLimiterConfig {
 const LIMITS: Record<string, RateLimiterConfig> = {
   printify: { maxRequests: 5, windowMs: 1000 },
   etsy: { maxRequests: 10, windowMs: 1000 },
+  shopify: { maxRequests: 2, windowMs: 1000 },
+  tiktok: { maxRequests: 5, windowMs: 1000 },
+  depop: { maxRequests: 3, windowMs: 1000 },
+  redbubble: { maxRequests: 3, windowMs: 1000 },
+  amazon: { maxRequests: 5, windowMs: 1000 },
   openai: { maxRequests: 5, windowMs: 60000 },
   anthropic: { maxRequests: 5, windowMs: 60000 },
   replicate: { maxRequests: 10, windowMs: 60000 },

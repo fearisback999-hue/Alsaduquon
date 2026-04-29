@@ -47,6 +47,15 @@ export const SETTING_VALIDATORS: Record<string, z.ZodType<unknown>> = {
     }
   }, "Must be a JSON array of product type strings"),
 
+  // Platforms — JSON array of enabled platform names
+  enabled_platforms: z.string().refine((v) => {
+    try {
+      const parsed = JSON.parse(v);
+      const valid = ["etsy", "shopify", "tiktok", "depop", "redbubble", "amazon"];
+      return Array.isArray(parsed) && parsed.every((x: unknown) => typeof x === "string" && valid.includes(x));
+    } catch { return false; }
+  }, "Must be a JSON array of valid platform names"),
+
   // General
   annual_revenue_goal: z.coerce.number().min(1000).max(100_000_000),
 };

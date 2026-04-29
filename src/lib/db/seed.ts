@@ -37,6 +37,9 @@ const DEFAULT_SETTINGS = [
 
   // Product types — all 16 available, top 5 enabled by default
   { key: "enabled_product_types", value: '["unisex_tshirt","hoodie","mug_11oz","poster","tote_bag"]', type: "json" as const, group: "pipeline" as const, description: "Product types to create per design (from: unisex_tshirt, hoodie, crewneck_sweatshirt, tank_top, long_sleeve_tee, vneck_tshirt, mug_11oz, mug_15oz, tote_bag, poster, canvas_print, phone_case, sticker, mousepad, blanket, throw_pillow)" },
+
+  // Platforms
+  { key: "enabled_platforms", value: '["etsy"]', type: "json" as const, group: "pipeline" as const, description: "Platforms to publish listings to (etsy, shopify, tiktok, depop, redbubble, amazon)" },
 ];
 
 async function seed() {

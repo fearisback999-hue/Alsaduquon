@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { etsyListings, listingMetrics, printifyProducts, designConcepts, niches } from "@/lib/db/schema";
+import { listings, listingMetrics, printifyProducts, designConcepts, niches } from "@/lib/db/schema";
 import { eq, and, sql, lt, gt } from "drizzle-orm";
 import { chatCompletion } from "@/lib/ai/client";
 import { ListingOptimizationSchema } from "@/lib/ai/schemas";
@@ -46,26 +46,27 @@ export async function GET(request: NextRequest) {
 
     const underperformers = await db
       .select({
-        listingId: etsyListings.id,
-        etsyListingId: etsyListings.etsyListingId,
-        title: etsyListings.title,
-        description: etsyListings.description,
-        tags: etsyListings.tags,
+        listingId: listings.id,
+        externalListingId: listings.externalListingId,
+        title: listings.title,
+        description: listings.description,
+        tags: listings.tags,
         views: listingMetrics.views,
         sales: listingMetrics.sales,
         conversionRate: listingMetrics.conversionRate,
         productType: printifyProducts.productType,
         nicheName: niches.name,
       })
-      .from(etsyListings)
-      .innerJoin(listingMetrics, eq(listingMetrics.etsyListingId, etsyListings.id))
-      .innerJoin(printifyProducts, eq(etsyListings.printifyProductId, printifyProducts.id))
+      .from(listings)
+      .innerJoin(listingMetrics, eq(listingMetrics.listingId, listings.id))
+      .innerJoin(printifyProducts, eq(listings.printifyProductId, printifyProducts.id))
       .innerJoin(designConcepts, eq(printifyProducts.designConceptId, designConcepts.id))
       .innerJoin(niches, eq(designConcepts.nicheId, niches.id))
       .where(
         and(
-          eq(etsyListings.status, "published"),
-          lt(etsyListings.publishedAt, fourteenDaysAgo),
+          eq(listings.status, "published"),
+          eq(listings.platform, "etsy"),
+          lt(listings.publishedAt, fourteenDaysAgo),
           gt(listingMetrics.views, 20),
           lt(listingMetrics.conversionRate, 1.0),
         ),
@@ -78,17 +79,17 @@ export async function GET(request: NextRequest) {
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
       if ((listing.views ?? 0) > 100 && (listing.sales ?? 0) === 0) {
         // Check if published > 30 days ago
-        const fullListing = await db.select().from(etsyListings).where(eq(etsyListings.id, listing.listingId)).get();
+        const fullListing = await db.select().from(listings).where(eq(listings.id, listing.listingId)).get();
         if (fullListing?.publishedAt && fullListing.publishedAt < thirtyDaysAgo) {
           log("info", `Deactivating zombie listing: ${listing.title} (${listing.views} views, 0 sales)`);
           try {
-            if (fullListing.etsyListingId) {
-              await etsy.updateListing(parseInt(fullListing.etsyListingId), { state: "inactive" });
+            if (fullListing.externalListingId) {
+              await etsy.updateListing(parseInt(fullListing.externalListingId), { state: "inactive" });
             }
-            await db.update(etsyListings).set({
+            await db.update(listings).set({
               status: "deactivated",
               updatedAt: new Date().toISOString(),
-            }).where(eq(etsyListings.id, fullListing.id));
+            }).where(eq(listings.id, fullListing.id));
           } catch (err) {
             log("error", `Failed to deactivate listing ${listing.title}`, {
               error: err instanceof Error ? err.message : String(err),
@@ -145,19 +146,19 @@ Return JSON:
         const newTitle = optimization.new_title.slice(0, 140);
         const newTags = optimization.new_tags.slice(0, 13);
 
-        if (newTitle && newTags.length > 0 && listing.etsyListingId) {
+        if (newTitle && newTags.length > 0 && listing.externalListingId) {
           // Update on Etsy
-          await etsy.updateListing(parseInt(listing.etsyListingId), {
+          await etsy.updateListing(parseInt(listing.externalListingId), {
             title: newTitle,
             tags: newTags,
           });
 
           // Update in our DB
-          await db.update(etsyListings).set({
+          await db.update(listings).set({
             title: newTitle,
             tags: JSON.stringify(newTags),
             updatedAt: new Date().toISOString(),
-          }).where(eq(etsyListings.id, listing.listingId));
+          }).where(eq(listings.id, listing.listingId));
 
           log("info", `Optimized listing: "${listing.title}" → "${newTitle}" (${optimization.changes_reasoning})`);
           optimized++;

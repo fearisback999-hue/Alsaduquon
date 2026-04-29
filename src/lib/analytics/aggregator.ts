@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import {
-  niches, designConcepts, etsyListings, orders,
+  niches, designConcepts, listings, orders,
   nicheAnalytics, dailyAnalytics, dailyCosts,
 } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
@@ -21,19 +21,19 @@ export async function aggregateNicheAnalytics(): Promise<void> {
     let totalProfit = 0;
 
     for (const concept of concepts) {
-      const listings = await db
+      const conceptListings = await db
         .select()
-        .from(etsyListings)
-        .where(eq(etsyListings.printifyProductId, concept.id)) // approximate — join through products
+        .from(listings)
+        .where(eq(listings.printifyProductId, concept.id)) // approximate — join through products
         .all();
 
-      totalListings += listings.length;
+      totalListings += conceptListings.length;
 
-      for (const listing of listings) {
+      for (const listing of conceptListings) {
         const listingOrders = await db
           .select()
           .from(orders)
-          .where(eq(orders.etsyListingId, listing.id))
+          .where(eq(orders.listingId, listing.id))
           .all();
 
         totalOrders += listingOrders.length;
@@ -72,8 +72,8 @@ export async function aggregateDailyAnalytics(date: string): Promise<void> {
   // Get today's counts from various tables
   const todayListingsPublished = await db
     .select({ count: sql<number>`count(*)` })
-    .from(etsyListings)
-    .where(eq(etsyListings.publishedAt, date))
+    .from(listings)
+    .where(eq(listings.publishedAt, date))
     .get();
 
   const todayOrders = await db

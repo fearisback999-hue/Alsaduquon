@@ -25,7 +25,7 @@ interface AutoEntry {
   feedback: string | null;
   isPublished: boolean;
   qualityScores: QualityScores | null;
-  listing: { id: string; title: string; finalPrice: number; etsyUrl: string | null; status: string } | null;
+  listing: { id: string; title: string; finalPrice: number; externalUrl: string | null; status: string; platform: string } | null;
   product: { productType: string } | null;
   niche: { name: string; compositeScore: number } | null;
   mockups: Array<{ storageUrl: string }>;
@@ -70,7 +70,7 @@ export default function AutoReviewPage() {
       });
       if (res.ok) {
         const data = await res.json();
-        toast.success(data.etsyDeactivated ? "Rejected and deactivated on Etsy" : "Rejected");
+        toast.success(data.platformDeactivated ? `Rejected and deactivated on ${data.platform ?? "platform"}` : "Rejected");
         loadData();
       } else {
         const data = await res.json().catch(() => null);
@@ -168,7 +168,7 @@ export default function AutoReviewPage() {
                       )}
                       {entry.isPublished && (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-success/10 text-success text-[11px] font-medium">
-                          <Eye className="h-3 w-3" /> live on Etsy
+                          <Eye className="h-3 w-3" /> live{entry.listing?.platform ? ` on ${entry.listing.platform}` : ""}
                         </span>
                       )}
                     </div>
@@ -212,14 +212,14 @@ export default function AutoReviewPage() {
                       <span className="text-fg-faint">
                         {new Date(entry.reviewedAt).toLocaleString()}
                       </span>
-                      {entry.listing?.etsyUrl && (
+                      {entry.listing?.externalUrl && (
                         <a
-                          href={entry.listing.etsyUrl}
+                          href={entry.listing.externalUrl}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="flex items-center gap-1 text-brand hover:underline"
                         >
-                          <ExternalLink className="h-3 w-3" /> view on Etsy
+                          <ExternalLink className="h-3 w-3" /> view{entry.listing?.platform ? ` on ${entry.listing.platform}` : ""}
                         </a>
                       )}
                     </div>

@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { etsyListings, listingMetrics, printifyProducts, designConcepts, niches } from "@/lib/db/schema";
+import { listings, listingMetrics, printifyProducts, designConcepts, niches } from "@/lib/db/schema";
 import { eq, and, gt, lt, sql } from "drizzle-orm";
 import * as etsy from "@/lib/external/etsy";
 import { log } from "@/lib/logger";
@@ -7,7 +7,7 @@ import { ETSY_LISTING_FEE, ETSY_TRANSACTION_FEE_PERCENT } from "@/lib/types";
 
 interface RepricingCandidate {
   listingId: string;
-  etsyListingId: string;
+  externalListingId: string;
   currentPrice: number;
   baseCost: number;
   views: number;
@@ -74,17 +74,21 @@ export async function runRepricing(): Promise<RepricingResult> {
     }
 
     try {
-      await etsy.updateListing(parseInt(candidate.etsyListingId), {
-        price: newPrice,
-      });
+      // Only call Etsy API for Etsy-platform listings
+      const listingRecord = await db.select().from(listings).where(eq(listings.id, candidate.listingId)).get();
+      if (listingRecord?.platform === "etsy") {
+        await etsy.updateListing(parseInt(candidate.externalListingId), {
+          price: newPrice,
+        });
+      }
 
       await db
-        .update(etsyListings)
+        .update(listings)
         .set({
           finalPrice: newPrice,
           updatedAt: new Date().toISOString(),
         })
-        .where(eq(etsyListings.id, candidate.listingId));
+        .where(eq(listings.id, candidate.listingId));
 
       log("info", `Repriced "${candidate.nicheName}" ${candidate.productType}: $${candidate.currentPrice} → $${newPrice} (${action.reason})`);
 
@@ -106,11 +110,11 @@ async function findRepricingCandidates(): Promise<RepricingCandidate[]> {
 
   const rows = await db
     .select({
-      listingId: etsyListings.id,
-      etsyListingId: etsyListings.etsyListingId,
-      currentPrice: etsyListings.finalPrice,
-      baseCost: etsyListings.basePrice,
-      publishedAt: etsyListings.publishedAt,
+      listingId: listings.id,
+      externalListingId: listings.externalListingId,
+      currentPrice: listings.finalPrice,
+      baseCost: listings.basePrice,
+      publishedAt: listings.publishedAt,
       views: listingMetrics.views,
       sales: listingMetrics.sales,
       conversionRate: listingMetrics.conversionRate,
@@ -118,15 +122,15 @@ async function findRepricingCandidates(): Promise<RepricingCandidate[]> {
       productType: printifyProducts.productType,
       nicheName: niches.name,
     })
-    .from(etsyListings)
-    .innerJoin(listingMetrics, eq(listingMetrics.etsyListingId, etsyListings.id))
-    .innerJoin(printifyProducts, eq(etsyListings.printifyProductId, printifyProducts.id))
+    .from(listings)
+    .innerJoin(listingMetrics, eq(listingMetrics.listingId, listings.id))
+    .innerJoin(printifyProducts, eq(listings.printifyProductId, printifyProducts.id))
     .innerJoin(designConcepts, eq(printifyProducts.designConceptId, designConcepts.id))
     .innerJoin(niches, eq(designConcepts.nicheId, niches.id))
     .where(
       and(
-        eq(etsyListings.status, "published"),
-        lt(etsyListings.publishedAt, minDate),
+        eq(listings.status, "published"),
+        lt(listings.publishedAt, minDate),
         gt(listingMetrics.views, MIN_VIEWS_FOR_REPRICING),
       ),
     )
@@ -134,7 +138,7 @@ async function findRepricingCandidates(): Promise<RepricingCandidate[]> {
 
   return rows.map((r) => ({
     listingId: r.listingId,
-    etsyListingId: r.etsyListingId!,
+    externalListingId: r.externalListingId!,
     currentPrice: r.currentPrice,
     baseCost: r.baseCost,
     views: r.views,

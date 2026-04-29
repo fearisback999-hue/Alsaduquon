@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { niches, designConcepts, printifyProducts, etsyListings, orders, listingMetrics } from "@/lib/db/schema";
+import { niches, designConcepts, printifyProducts, listings, orders, listingMetrics } from "@/lib/db/schema";
 import { eq, and, sql, gte, desc } from "drizzle-orm";
 import { log } from "@/lib/logger";
 
@@ -52,9 +52,9 @@ export async function findAmplificationCandidates(): Promise<AmplificationCandid
       .from(designConcepts)
       .innerJoin(niches, eq(designConcepts.nicheId, niches.id))
       .innerJoin(printifyProducts, eq(printifyProducts.designConceptId, designConcepts.id))
-      .innerJoin(etsyListings, eq(etsyListings.printifyProductId, printifyProducts.id))
-      .innerJoin(orders, eq(orders.etsyListingId, etsyListings.id))
-      .leftJoin(listingMetrics, eq(listingMetrics.etsyListingId, etsyListings.id))
+      .innerJoin(listings, eq(listings.printifyProductId, printifyProducts.id))
+      .innerJoin(orders, eq(orders.listingId, listings.id))
+      .leftJoin(listingMetrics, eq(listingMetrics.listingId, listings.id))
       .where(gte(orders.orderedAt, cutoff))
       .groupBy(designConcepts.id)
       .having(sql`count(distinct ${orders.id}) >= ${MIN_ORDERS_FOR_WINNER}`)

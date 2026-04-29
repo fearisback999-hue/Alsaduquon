@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
-import { etsyListings, listingMetrics, orders } from "@/lib/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { listings, listingMetrics, orders } from "@/lib/db/schema";
+import { eq, and, sql } from "drizzle-orm";
 import * as etsy from "@/lib/external/etsy";
 import { log } from "@/lib/logger";
 
@@ -27,8 +27,8 @@ export async function syncListingMetrics(): Promise<{ synced: number; failed: nu
           // Find our internal listing record by Etsy listing ID
           const internalListing = await db
             .select()
-            .from(etsyListings)
-            .where(eq(etsyListings.etsyListingId, String(etsyListing.listing_id)))
+            .from(listings)
+            .where(and(eq(listings.externalListingId, String(etsyListing.listing_id)), eq(listings.platform, "etsy")))
             .get();
 
           if (!internalListing) continue;
@@ -37,7 +37,7 @@ export async function syncListingMetrics(): Promise<{ synced: number; failed: nu
           const salesResult = await db
             .select({ count: sql<number>`count(*)`, revenue: sql<number>`coalesce(sum(revenue), 0)` })
             .from(orders)
-            .where(eq(orders.etsyListingId, internalListing.id))
+            .where(eq(orders.listingId, internalListing.id))
             .get();
 
           const views = etsyListing.views ?? 0;
@@ -50,7 +50,7 @@ export async function syncListingMetrics(): Promise<{ synced: number; failed: nu
           const existing = await db
             .select()
             .from(listingMetrics)
-            .where(eq(listingMetrics.etsyListingId, internalListing.id))
+            .where(eq(listingMetrics.listingId, internalListing.id))
             .get();
 
           if (existing) {
@@ -64,7 +64,7 @@ export async function syncListingMetrics(): Promise<{ synced: number; failed: nu
             }).where(eq(listingMetrics.id, existing.id));
           } else {
             await db.insert(listingMetrics).values({
-              etsyListingId: internalListing.id,
+              listingId: internalListing.id,
               views,
               favorites,
               sales,

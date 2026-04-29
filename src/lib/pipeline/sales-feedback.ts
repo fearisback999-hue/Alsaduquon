@@ -4,7 +4,7 @@ import {
   niches,
   nicheAnalytics,
   orders,
-  etsyListings,
+  listings,
   printifyProducts,
   designConcepts,
 } from "@/lib/db/schema";
@@ -69,8 +69,8 @@ export async function getTopDesignsByOrders(limit = 10): Promise<TopDesign[]> {
         revenue: sql<number>`coalesce(sum(${orders.revenue}), 0)`,
       })
       .from(orders)
-      .innerJoin(etsyListings, eq(orders.etsyListingId, etsyListings.id))
-      .innerJoin(printifyProducts, eq(etsyListings.printifyProductId, printifyProducts.id))
+      .innerJoin(listings, eq(orders.listingId, listings.id))
+      .innerJoin(printifyProducts, eq(listings.printifyProductId, printifyProducts.id))
       .innerJoin(designConcepts, eq(printifyProducts.designConceptId, designConcepts.id))
       .innerJoin(niches, eq(designConcepts.nicheId, niches.id))
       .groupBy(designConcepts.id)
@@ -100,8 +100,8 @@ export async function getDesignTypePerformance(): Promise<DesignTypeStats[]> {
         totalRevenue: sql<number>`coalesce(sum(${orders.revenue}), 0)`,
       })
       .from(orders)
-      .innerJoin(etsyListings, eq(orders.etsyListingId, etsyListings.id))
-      .innerJoin(printifyProducts, eq(etsyListings.printifyProductId, printifyProducts.id))
+      .innerJoin(listings, eq(orders.listingId, listings.id))
+      .innerJoin(printifyProducts, eq(listings.printifyProductId, printifyProducts.id))
       .innerJoin(designConcepts, eq(printifyProducts.designConceptId, designConcepts.id))
       .groupBy(designConcepts.designType)
       .orderBy(desc(sql`count(${orders.id})`))

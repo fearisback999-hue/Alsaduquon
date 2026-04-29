@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { niches, designConcepts, printifyProducts, etsyListings, orders, listingMetrics } from "@/lib/db/schema";
+import { niches, designConcepts, printifyProducts, listings, orders, listingMetrics } from "@/lib/db/schema";
 import { eq, and, sql, lt, inArray } from "drizzle-orm";
 import { log } from "@/lib/logger";
 
@@ -29,27 +29,27 @@ export async function pruneDeadNiches(): Promise<PruningResult> {
       .select({
         nicheId: niches.id,
         nicheName: niches.name,
-        listingCount: sql<number>`count(distinct ${etsyListings.id})`,
+        listingCount: sql<number>`count(distinct ${listings.id})`,
         totalViews: sql<number>`coalesce(sum(${listingMetrics.views}), 0)`,
         totalFavorites: sql<number>`coalesce(sum(${listingMetrics.favorites}), 0)`,
         totalOrders: sql<number>`count(distinct ${orders.id})`,
-        oldestListingAt: sql<string>`min(${etsyListings.publishedAt})`,
+        oldestListingAt: sql<string>`min(${listings.publishedAt})`,
       })
       .from(niches)
       .innerJoin(designConcepts, eq(designConcepts.nicheId, niches.id))
       .innerJoin(printifyProducts, eq(printifyProducts.designConceptId, designConcepts.id))
-      .innerJoin(etsyListings, eq(etsyListings.printifyProductId, printifyProducts.id))
-      .leftJoin(listingMetrics, eq(listingMetrics.etsyListingId, etsyListings.id))
-      .leftJoin(orders, eq(orders.etsyListingId, etsyListings.id))
+      .innerJoin(listings, eq(listings.printifyProductId, printifyProducts.id))
+      .leftJoin(listingMetrics, eq(listingMetrics.listingId, listings.id))
+      .leftJoin(orders, eq(orders.listingId, listings.id))
       .where(
         and(
-          eq(etsyListings.status, "published"),
+          eq(listings.status, "published"),
           inArray(niches.status, ["active", "approved"]),
         ),
       )
       .groupBy(niches.id)
       .having(
-        sql`count(distinct ${etsyListings.id}) >= ${MIN_LISTINGS_FOR_VERDICT} AND min(${etsyListings.publishedAt}) < ${cutoff} AND count(distinct ${orders.id}) = 0 AND coalesce(sum(${listingMetrics.views}), 0) < ${MAX_VIEWS_TO_PRUNE} AND coalesce(sum(${listingMetrics.favorites}), 0) < ${MAX_FAVORITES_TO_PRUNE}`,
+        sql`count(distinct ${listings.id}) >= ${MIN_LISTINGS_FOR_VERDICT} AND min(${listings.publishedAt}) < ${cutoff} AND count(distinct ${orders.id}) = 0 AND coalesce(sum(${listingMetrics.views}), 0) < ${MAX_VIEWS_TO_PRUNE} AND coalesce(sum(${listingMetrics.favorites}), 0) < ${MAX_FAVORITES_TO_PRUNE}`,
       )
       .all();
 
