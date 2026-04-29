@@ -23,7 +23,9 @@ CREATE TABLE `listings` (
 	`pipeline_run_id` text,
 	`published_at` text,
 	`created_at` text NOT NULL,
-	`updated_at` text NOT NULL
+	`updated_at` text NOT NULL,
+	FOREIGN KEY (`printify_product_id`) REFERENCES `printify_products`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`pipeline_run_id`) REFERENCES `pipeline_runs`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
 CREATE INDEX `listings_v2_status_idx` ON `listings` (`status`);

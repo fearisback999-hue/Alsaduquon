@@ -44,6 +44,9 @@ export const redbubbleStrategy: PlatformStrategy = {
   },
 
   async createDraftListing(data: ListingInput): Promise<PlatformListingResult> {
+    if (data.imageUrls.length === 0) {
+      throw new ExternalAPIError("Redbubble", 400, "Cannot create Redbubble artwork without an image");
+    }
     const imageBase64 = await downloadImageAsBase64(data.imageUrls[0]);
 
     const result = await withRetry(() =>

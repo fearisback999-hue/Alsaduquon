@@ -2,7 +2,6 @@ import type { PipelineContext, StepResult } from "../context";
 import { printifyProducts, mockups, listings, designConcepts, niches, settings } from "@/lib/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import { getEnabledPlatforms } from "@/lib/platforms/registry";
-import type { PlatformStrategy } from "@/lib/platforms/types";
 import { generatePlatformTitle, generatePlatformDescription, generatePlatformTags, calculateSEOScore } from "@/lib/seo/platform-seo";
 import { getProductDisplayName } from "@/lib/printify/product-config";
 import { calculateDynamicPrice } from "@/lib/pricing/engine";
@@ -74,13 +73,15 @@ export default async function execute(context: PipelineContext): Promise<StepRes
       .map(m => m.storageUrl ?? m.originalUrl!)
       .filter(Boolean);
 
+    const existingListings = await context.db
+      .select({ platform: listings.platform })
+      .from(listings)
+      .where(eq(listings.printifyProductId, primaryProduct.id))
+      .all();
+    const existingPlatforms = new Set(existingListings.map((l) => l.platform));
+
     for (const platform of platforms) {
-      const existingListing = await context.db
-        .select()
-        .from(listings)
-        .where(eq(listings.printifyProductId, primaryProduct.id))
-        .all();
-      if (existingListing.some(l => l.platform === platform.id)) continue;
+      if (existingPlatforms.has(platform.id)) continue;
 
       await enforcebudget(0.05);
 

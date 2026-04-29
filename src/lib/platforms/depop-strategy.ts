@@ -81,7 +81,7 @@ export const depopStrategy: PlatformStrategy = {
   },
 
   getMaxTitleLength() {
-    return 0;
+    return 65;
   },
 
   getMaxTags() {
@@ -90,13 +90,13 @@ export const depopStrategy: PlatformStrategy = {
 
   getSEOHints(): PlatformSEOHints {
     return {
-      titleMaxLength: 0,
+      titleMaxLength: 65,
       maxTags: 5,
       tagMaxLength: 30,
       descriptionMaxWords: 200,
       platformName: "Depop",
       seoGuidance:
-        "Casual, Gen-Z friendly. Use #hashtags in description. Streetwear/fashion language. Keep it authentic and personal. Short sentences.",
+        "Casual, Gen-Z friendly. Depop has no separate title field, so the first line will become the listing's headline. Use #hashtags in description. Streetwear/fashion language. Keep it authentic and personal. Short sentences.",
     };
   },
 };

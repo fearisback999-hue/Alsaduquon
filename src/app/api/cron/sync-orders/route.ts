@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
         const existingOrder = await db
           .select()
           .from(orders)
-          .where(eq(orders.externalOrderId, String(receipt.receipt_id)))
+          .where(and(eq(orders.platform, "etsy"), eq(orders.externalOrderId, String(receipt.receipt_id))))
           .get();
 
         if (existingOrder) {

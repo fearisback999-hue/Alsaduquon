@@ -91,7 +91,7 @@ export async function enforceListingLimit(): Promise<void> {
 }
 
 export async function recordCost(
-  category: "openai_text" | "openai_image" | "openai_moderation" | "anthropic_text" | "replicate_image" | "printify" | "etsy_fee" | "trend_api" | "other",
+  category: "openai_text" | "openai_image" | "openai_moderation" | "anthropic_text" | "replicate_image" | "printify" | "etsy_fee" | "shopify_fee" | "tiktok_fee" | "depop_fee" | "redbubble_fee" | "amazon_fee" | "trend_api" | "other",
   amount: number,
   options?: { modelName?: string; description?: string; referenceId?: string; referenceType?: string },
 ): Promise<void> {
@@ -119,7 +119,7 @@ export async function recordCost(
   const isAI = category === "openai_text" || category === "openai_image" || category === "openai_moderation"
     || category === "anthropic_text" || category === "replicate_image";
   const isAPI = category === "printify" || category === "trend_api";
-  const isFee = category === "etsy_fee";
+  const isFee = category === "etsy_fee" || category === "shopify_fee" || category === "tiktok_fee" || category === "depop_fee" || category === "redbubble_fee" || category === "amazon_fee";
 
   await db
     .update(dailyCosts)
