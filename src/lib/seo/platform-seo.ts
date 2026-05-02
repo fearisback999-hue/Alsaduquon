@@ -45,27 +45,75 @@ export async function generatePlatformTitle(
   hints: PlatformSEOHints,
   pipelineRunId?: string,
 ): Promise<string> {
-  const prompt = `Generate a ${hints.platformName} listing title for a ${productType} in the "${niche}" niche.
+  const variants = await generatePlatformTitleVariants(niche, conceptTitle, productType, hints, pipelineRunId);
+  return variants[0];
+}
+
+/**
+ * Generates 3 distinct title variants written by an expert POD copywriter.
+ * Picks the first one for publish; downstream A/B systems can rotate to the
+ * others. Includes concrete examples in the prompt and forbids generic
+ * "Niche T-Shirt for Niche Lovers" patterns.
+ */
+export async function generatePlatformTitleVariants(
+  niche: string,
+  conceptTitle: string,
+  productType: string,
+  hints: PlatformSEOHints,
+  pipelineRunId?: string,
+): Promise<string[]> {
+  const prompt = `Generate 3 distinct ${hints.platformName} listing titles for a ${productType} in the "${niche}" niche.
 Design concept: "${conceptTitle}"
 
 Platform-specific guidance: ${hints.seoGuidance}
 
-Rules:
-- Maximum ${hints.titleMaxLength} characters
-- Front-load the most important keywords
-- Include the product type naturally
-- Use relevant long-tail keywords
-- No ALL CAPS, no special characters
+EXAMPLES of strong titles (learn the structure, do not copy):
+- "Funny Cat Mom T-Shirt | Crazy Cat Lady Gift | Cute Kitten Lover Tee for Women"
+- "Mama Bear Hoodie | Mother's Day Gift for Mom | Cozy Bear Pullover for New Moms"
+- "Vintage Sunset Wave Poster | Retro Beach Wall Art | Aesthetic Surf Print Decor"
 
-Return ONLY the title text, nothing else.`;
+Each variant must:
+- Stay under ${hints.titleMaxLength} characters
+- Use a different opening keyword (not all 3 starting with the same word)
+- Mix discovery keywords (product type, niche) with intent keywords (gift, for women, funny, cute, aesthetic)
+- Name the buyer persona or occasion when natural ("for new moms", "for dog dads", "Mother's Day")
+- Read like a thoughtful human listing — not generic SEO stuffing
+- Avoid the pattern "[Niche] [Product] for [Niche] Lovers"
 
-  const result = await completeText(prompt, {
-    systemPrompt: `You are a ${hints.platformName} SEO expert. Generate optimized listing titles that rank well on ${hints.platformName}. Return ONLY the title, no explanation.`,
-    maxTokens: 200,
-    temperature: 0.6,
-  }, pipelineRunId);
+Return JSON: {"titles": ["title1", "title2", "title3"]}`;
 
-  return result.content.trim().replace(/^["']|["']$/g, "").slice(0, hints.titleMaxLength);
+  const result = await chatCompletion(prompt, {
+    systemPrompt: `You are a ${hints.platformName} copywriter who has personally driven millions in POD revenue. Your titles rank AND convert. Return ONLY JSON.`,
+    maxTokens: 600,
+    temperature: 0.75,
+  });
+
+  await trackTextUsage({
+    model: result.model,
+    operation: "seo_title_variants",
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens,
+    pipelineRunId,
+  });
+
+  let titles: string[] = [];
+  try {
+    const match = result.content.match(/\{[\s\S]*\}/);
+    if (match) {
+      const parsed = JSON.parse(match[0]);
+      titles = Array.isArray(parsed.titles) ? parsed.titles : [];
+    }
+  } catch { /* ignore */ }
+
+  const cleaned = titles
+    .map((t) => String(t).trim().replace(/^["']|["']$/g, "").slice(0, hints.titleMaxLength))
+    .filter((t) => t.length > 0);
+
+  if (cleaned.length === 0) {
+    return [`${conceptTitle} ${productType}`.slice(0, hints.titleMaxLength)];
+  }
+
+  return cleaned;
 }
 
 export async function generatePlatformDescription(
@@ -82,12 +130,21 @@ Design: "${conceptTitle}" - ${conceptDescription}
 
 Platform-specific guidance: ${hints.seoGuidance}
 
+STRUCTURE (follow this order):
+1. EMOTIONAL HOOK (1-2 lines) — speak to who this person IS, what they love, the moment they'll wear/use this
+2. PRODUCT DETAILS — premium feel: material quality, print method, durability ("ultra-soft cotton", "fade-resistant DTG print", "true-to-size fit")
+3. WHO IT'S FOR — gift occasions, recipient personas (give 2-3 specific examples)
+4. CARE / LOGISTICS — wash instructions if apparel, dishwasher/microwave safe if mug, ships in 3-5 business days, packaged with care
+
+TONE: warm, confident, specific. Avoid AI-tells like "elevate your style", "make a statement",
+"stand out from the crowd". Use concrete sensory language ("buttery-soft", "crisp print",
+"saturated colors that don't crack").
+
 Rules:
-- Start with a hook that connects emotionally with the buyer
-- Include relevant keywords naturally
-- Mention product details: material, print quality, sizing info
 - ${hints.descriptionMaxWords}-word maximum
-- Use short paragraphs for readability
+- Short paragraphs (2-3 lines each)
+- Include relevant keywords naturally — never stuff
+- No emojis unless the niche demands it (kawaii, cute, aesthetic niches OK)
 
 Return ONLY the description text.`;
 
@@ -137,7 +194,63 @@ Return JSON: {"tags": ["tag1", "tag2", ...]}`;
     pipelineRunId,
   });
 
-  return (result.parsed?.tags ?? []).slice(0, hints.maxTags).map((t) => t.slice(0, hints.tagMaxLength));
+  const raw = (result.parsed?.tags ?? []).map((t) => t.slice(0, hints.tagMaxLength));
+  return dedupeTags(raw, hints.maxTags);
+}
+
+/**
+ * Semantic tag dedup — strips plurals, removes substring overlaps, and
+ * collapses near-duplicates so we don't burn 4 of 13 Etsy tag slots on
+ * "cat", "cats", "kitten", "kittens".
+ */
+export function dedupeTags(tags: string[], maxCount: number): string[] {
+  const normalize = (t: string) => t.toLowerCase().trim().replace(/\s+/g, " ");
+  const stem = (t: string) => {
+    const n = normalize(t);
+    // Strip simple plural / possessive suffixes
+    if (n.endsWith("ies") && n.length > 4) return n.slice(0, -3) + "y";
+    if (n.endsWith("es") && n.length > 3) return n.slice(0, -2);
+    if (n.endsWith("s") && n.length > 2 && !n.endsWith("ss")) return n.slice(0, -1);
+    return n;
+  };
+
+  const seenStems = new Set<string>();
+  const result: string[] = [];
+
+  for (const tag of tags) {
+    if (!tag) continue;
+    const trimmed = tag.trim();
+    if (trimmed.length === 0) continue;
+
+    const tagStem = stem(trimmed);
+    if (seenStems.has(tagStem)) continue;
+
+    // Reject if this tag is a strict substring of an already-kept tag
+    const isSubstringOfExisting = result.some((existing) => {
+      const e = normalize(existing);
+      const t = normalize(trimmed);
+      return e !== t && e.includes(t);
+    });
+    if (isSubstringOfExisting) continue;
+
+    // Reject if an already-kept tag is a strict substring of this one — replace it instead
+    const supersededIdx = result.findIndex((existing) => {
+      const e = normalize(existing);
+      const t = normalize(trimmed);
+      return e !== t && t.includes(e);
+    });
+    if (supersededIdx >= 0) {
+      result[supersededIdx] = trimmed;
+      seenStems.add(tagStem);
+      continue;
+    }
+
+    seenStems.add(tagStem);
+    result.push(trimmed);
+    if (result.length >= maxCount) break;
+  }
+
+  return result;
 }
 
 export function calculateSEOScore(

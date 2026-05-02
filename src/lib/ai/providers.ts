@@ -163,7 +163,7 @@ export async function generateImageFlux(
       aspect_ratio: options?.aspectRatio ?? "1:1",
       output_format: "png",
       safety_tolerance: 2,
-      raw: options?.raw ?? false,
+      raw: options?.raw ?? true,
     },
   });
 
@@ -186,6 +186,53 @@ export async function generateImageFlux(
     buffer = Buffer.from(await response.arrayBuffer());
   } else {
     throw new Error(`Unexpected Flux output type: ${typeof output}`);
+  }
+
+  return { buffer, format: "png" };
+}
+
+/**
+ * Upscales an image using Real-ESRGAN on Replicate.
+ *
+ * Used to take a 1024–2048 px AI-generated design up to print resolution
+ * with detail preservation that pixel interpolation (sharp) cannot match.
+ * Costs ~$0.0023 per call. The fallback in upscaler.ts handles failures.
+ */
+export async function upscaleWithRealESRGAN(
+  imageUrl: string,
+  scale: 2 | 4 = 4,
+): Promise<{ buffer: Buffer; format: string }> {
+  const replicate = getReplicate();
+
+  const output = await replicate.run(
+    "nightmareai/real-esrgan:f121d640bd286e1fdc67f9799164c1d5be36ff74576ee11c803ae5b665dd46aa",
+    {
+      input: {
+        image: imageUrl,
+        scale,
+        face_enhance: false,
+      },
+    },
+  );
+
+  let buffer: Buffer;
+  if (output instanceof ReadableStream) {
+    const chunks: Uint8Array[] = [];
+    const reader = output.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) chunks.push(value);
+    }
+    buffer = Buffer.concat(chunks);
+  } else if (typeof output === "string") {
+    const response = await fetch(output);
+    buffer = Buffer.from(await response.arrayBuffer());
+  } else if (output && typeof output === "object" && "url" in (output as Record<string, unknown>)) {
+    const response = await fetch((output as { url: string }).url);
+    buffer = Buffer.from(await response.arrayBuffer());
+  } else {
+    throw new Error(`Unexpected Real-ESRGAN output type: ${typeof output}`);
   }
 
   return { buffer, format: "png" };

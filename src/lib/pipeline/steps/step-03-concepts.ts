@@ -150,6 +150,10 @@ Return JSON:
         });
 
         if (!modResult.passed) {
+          const reasons: string[] = [];
+          if (modResult.openaiResult.flagged) reasons.push(`openai: ${modResult.openaiResult.categories.join(", ")}`);
+          if (!modResult.etsyResult.passed) reasons.push(`policy: ${modResult.etsyResult.violations.join("; ")}`);
+          log("warn", `[Step 03] Concept rejected by moderation for "${niche.name}" / "${concept.title}": ${reasons.join(" | ")}`);
           moderationRejects++;
           await context.db.insert(designConcepts).values({
             nicheId: niche.id,

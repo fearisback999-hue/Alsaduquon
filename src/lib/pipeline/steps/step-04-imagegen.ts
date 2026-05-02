@@ -13,6 +13,22 @@ import { FLUX_PRO_ULTRA_COST, GPT4O_VISION_COST_ESTIMATE } from "@/lib/types";
 
 const QUALITY_SYSTEM_PROMPT = "You are a print-on-demand quality inspector. Evaluate images for commercial viability on products like t-shirts, mugs, posters, and phone cases. Be strict — customers pay $25-45 for these products.";
 
+/**
+ * Returns the best Flux aspect ratio for a concept's recommended product mix.
+ * Posters/canvas are art pieces — portrait. Apparel chest prints stay square.
+ * Phone cases need tall narrow. Mugs print as a wraparound but the customer
+ * sees the front face, so square works there too.
+ */
+function getAspectRatioForConcept(recommendedProducts: string[] | null): "1:1" | "3:4" | "4:3" | "9:16" {
+  if (!recommendedProducts || recommendedProducts.length === 0) return "1:1";
+  const primary = recommendedProducts[0];
+  if (primary === "poster" || primary === "canvas_print" || primary === "blanket" || primary === "throw_pillow") {
+    return "3:4";
+  }
+  if (primary === "phone_case") return "9:16";
+  return "1:1";
+}
+
 function buildQualityPrompt(stylePrompt: string): string {
   return `Evaluate this AI-generated design for print-on-demand suitability.
 
@@ -80,8 +96,15 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         let stored: { url: string; pathname: string };
 
         if (useFlux) {
-          // Flux 1.1 Pro Ultra — returns a buffer directly
-          const result = await generateImageFlux(currentPrompt);
+          // Flux 1.1 Pro Ultra — returns a buffer directly. Aspect ratio
+          // is picked based on the concept's primary product type.
+          let recommendedProducts: string[] | null = null;
+          try {
+            const palette = JSON.parse(concept.colorPalette ?? "{}");
+            recommendedProducts = palette.recommended_products ?? null;
+          } catch { /* ignore */ }
+          const aspectRatio = getAspectRatioForConcept(recommendedProducts);
+          const result = await generateImageFlux(currentPrompt, { aspectRatio, raw: true });
           stored = await uploadImageBuffer(
             result.buffer,
             `designs/${concept.nicheId}/${concept.id}-attempt${attempt}.png`,

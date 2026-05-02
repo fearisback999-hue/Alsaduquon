@@ -93,6 +93,10 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
       const modResult = await fullModeration(`${title} ${description} ${tags.join(" ")}`);
       if (!modResult.passed) {
+        const reasons: string[] = [];
+        if (modResult.openaiResult.flagged) reasons.push(`openai: ${modResult.openaiResult.categories.join(", ")}`);
+        if (!modResult.etsyResult.passed) reasons.push(`policy: ${modResult.etsyResult.violations.join("; ")}`);
+        log("warn", `[Step 08] Moderation rejected listing for "${niche.name}" / "${concept.title}" on ${platform.id}: ${reasons.join(" | ")}`);
         moderationRejects++;
         continue;
       }

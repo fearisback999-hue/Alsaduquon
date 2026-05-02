@@ -11,7 +11,7 @@ import { log } from "@/lib/logger";
 import { verifyCronSecret } from "@/lib/auth/cron-auth";
 import { runRepricing } from "@/lib/pricing/optimizer";
 import { amplifyWinningNiches } from "@/lib/pipeline/winner-amplification";
-import { pruneDeadNiches } from "@/lib/pipeline/niche-pruning";
+import { pruneDeadNiches, pruneSaturatedNiches } from "@/lib/pipeline/niche-pruning";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -39,6 +39,11 @@ export async function GET(request: NextRequest) {
     // Stops wasting future pipeline budget on proven losers.
     const pruningResult = await pruneDeadNiches();
     log("info", `Pruning: marked ${pruningResult.exhausted} niches as exhausted`);
+
+    // Phase 3b: Pause saturated niches — high traffic but anemic conversion
+    // means we're competing in too crowded a market. Frees budget for fresh niches.
+    const saturationResult = await pruneSaturatedNiches();
+    log("info", `Saturation: paused ${saturationResult.exhausted} saturated niches`);
 
     // Find underperforming listings:
     // Published 14+ days ago, has views but low conversion (<1%)
@@ -178,6 +183,7 @@ Return JSON:
       repricing: repricingResult,
       amplification: amplificationResult,
       pruning: { exhausted: pruningResult.exhausted },
+      saturation: { paused: saturationResult.exhausted },
     });
   } catch (error) {
     log("error", "Optimization cron failed", { error: error instanceof Error ? error.message : String(error) });

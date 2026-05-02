@@ -47,7 +47,7 @@ export const niches = sqliteTable("niches", {
   category: text("category"),
   description: text("description"),
   source: text("source", { enum: ["podcs", "flying_research", "etsy_trends", "ai_expansion", "manual"] }),
-  status: text("status", { enum: ["discovered", "scored", "approved", "rejected", "active", "exhausted"] }).notNull().default("discovered"),
+  status: text("status", { enum: ["discovered", "scored", "approved", "rejected", "active", "exhausted", "saturated"] }).notNull().default("discovered"),
 
   // Raw trend data (step 1)
   searchVolume: integer("search_volume"),

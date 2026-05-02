@@ -83,3 +83,75 @@ export async function pruneDeadNiches(): Promise<PruningResult> {
     return { exhausted: 0, candidates: [] };
   }
 }
+
+const SATURATION_MIN_LISTINGS = 10;
+const SATURATION_MIN_DAYS = 30;
+const SATURATION_MAX_CONVERSION = 0.5;
+const SATURATION_MIN_VIEWS = 100;
+
+/**
+ * Pauses saturated niches: lots of listings, real traffic, but anemic
+ * conversion. These look "alive" by view count so the dead-niche pruner
+ * won't catch them, but they burn generation budget for poor return.
+ *
+ * Sets status to "saturated" — distinct from "exhausted" so it can be
+ * re-evaluated quarterly when trends shift.
+ */
+export async function pruneSaturatedNiches(): Promise<PruningResult> {
+  const cutoff = new Date(Date.now() - SATURATION_MIN_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
+  try {
+    const candidates = await db
+      .select({
+        nicheId: niches.id,
+        nicheName: niches.name,
+        listingCount: sql<number>`count(distinct ${listings.id})`,
+        totalViews: sql<number>`coalesce(sum(${listingMetrics.views}), 0)`,
+        totalOrders: sql<number>`count(distinct ${orders.id})`,
+        avgConversion: sql<number>`coalesce(avg(${listingMetrics.conversionRate}), 0)`,
+      })
+      .from(niches)
+      .innerJoin(designConcepts, eq(designConcepts.nicheId, niches.id))
+      .innerJoin(printifyProducts, eq(printifyProducts.designConceptId, designConcepts.id))
+      .innerJoin(listings, eq(listings.printifyProductId, printifyProducts.id))
+      .leftJoin(listingMetrics, eq(listingMetrics.listingId, listings.id))
+      .leftJoin(orders, eq(orders.listingId, listings.id))
+      .where(
+        and(
+          eq(listings.status, "published"),
+          inArray(niches.status, ["active", "approved"]),
+        ),
+      )
+      .groupBy(niches.id)
+      .having(
+        sql`count(distinct ${listings.id}) >= ${SATURATION_MIN_LISTINGS} AND min(${listings.publishedAt}) < ${cutoff} AND coalesce(sum(${listingMetrics.views}), 0) >= ${SATURATION_MIN_VIEWS} AND coalesce(avg(${listingMetrics.conversionRate}), 0) < ${SATURATION_MAX_CONVERSION}`,
+      )
+      .all();
+
+    const result: PruningResult = { exhausted: 0, candidates: [] };
+
+    for (const candidate of candidates) {
+      const reason = `${candidate.listingCount} listings, ${candidate.totalViews} views, only ${candidate.totalOrders} orders (${candidate.avgConversion.toFixed(2)}% conversion) — saturated`;
+
+      try {
+        await db
+          .update(niches)
+          .set({ status: "saturated", updatedAt: new Date().toISOString() })
+          .where(eq(niches.id, candidate.nicheId));
+
+        log("info", `Paused saturated niche: "${candidate.nicheName}" — ${reason}`);
+        result.candidates.push({ nicheId: candidate.nicheId, nicheName: candidate.nicheName, reason });
+        result.exhausted++;
+      } catch (error) {
+        log("error", `Failed to pause saturated niche ${candidate.nicheName}`, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    return result;
+  } catch (error) {
+    log("error", "Saturated niche pruning failed", { error: error instanceof Error ? error.message : String(error) });
+    return { exhausted: 0, candidates: [] };
+  }
+}

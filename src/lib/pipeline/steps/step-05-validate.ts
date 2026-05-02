@@ -31,8 +31,11 @@ export default async function execute(context: PipelineContext): Promise<StepRes
       // Post-process: reduce AI artifacts
       const processedBuffer = await postProcessForPrint(rawBuffer);
 
-      // Upscale to print-ready dimensions
-      const upscaled = await upscaleForPrint(processedBuffer);
+      // Upscale to print-ready dimensions — uses Real-ESRGAN when REPLICATE_API_TOKEN
+      // is set, falling back to sharp interpolation if it fails.
+      const upscaled = await upscaleForPrint(processedBuffer, 4500, 5400, {
+        sourceUrl: image.storageUrl ?? undefined,
+      });
 
       // Upload the upscaled version back to Blob
       const stored = await uploadImageBuffer(
