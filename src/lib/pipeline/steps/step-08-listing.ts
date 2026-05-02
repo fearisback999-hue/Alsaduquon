@@ -2,7 +2,7 @@ import type { PipelineContext, StepResult } from "../context";
 import { printifyProducts, mockups, listings, designConcepts, niches, settings } from "@/lib/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import { getEnabledPlatforms } from "@/lib/platforms/registry";
-import { generatePlatformTitle, generatePlatformDescription, generatePlatformTags, calculateSEOScore } from "@/lib/seo/platform-seo";
+import { generatePlatformTitleVariants, generatePlatformDescription, generatePlatformTags, calculateSEOScore } from "@/lib/seo/platform-seo";
 import { getProductDisplayName } from "@/lib/printify/product-config";
 import { calculateDynamicPrice, getTargetMargin } from "@/lib/pricing/engine";
 import { fullModeration } from "@/lib/ai/moderation";
@@ -87,7 +87,8 @@ export default async function execute(context: PipelineContext): Promise<StepRes
       await enforcebudget(0.05);
 
       const seoHints = platform.getSEOHints();
-      const title = await generatePlatformTitle(niche.name, concept.title, productDisplayName, seoHints, context.pipelineRunId);
+      const titleVariants = await generatePlatformTitleVariants(niche.name, concept.title, productDisplayName, seoHints, context.pipelineRunId);
+      const title = titleVariants[0];
       const description = await generatePlatformDescription(niche.name, concept.title, concept.description ?? "", productDisplayName, seoHints, context.pipelineRunId);
       const tags = await generatePlatformTags(niche.name, concept.title, productDisplayName, seoHints, context.pipelineRunId);
 
@@ -134,6 +135,8 @@ export default async function execute(context: PipelineContext): Promise<StepRes
           printifyProductId: primaryProduct.id,
           externalListingId: result.externalId,
           title,
+          titleVariants: titleVariants.length > 1 ? JSON.stringify(titleVariants) : null,
+          titleVariantIndex: 0,
           description,
           tags: JSON.stringify(tags),
           seoScore,

@@ -204,6 +204,9 @@ export const listings = sqliteTable("listings", {
   printifyProductId: text("printify_product_id").references(() => printifyProducts.id, { onDelete: "cascade" }),
   externalListingId: text("external_listing_id"),
   title: text("title").notNull(),
+  titleVariants: text("title_variants"), // JSON array of variant titles for A/B rotation
+  titleVariantIndex: integer("title_variant_index").default(0),
+  titleVariantRotatedAt: text("title_variant_rotated_at"),
   description: text("description").notNull(),
   tags: text("tags").notNull(), // JSON array
   materials: text("materials"), // JSON array

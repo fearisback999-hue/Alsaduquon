@@ -152,6 +152,40 @@ export const amazonStrategy: PlatformStrategy = {
     );
   },
 
+  async updateTitle(externalId: string, title: string): Promise<void> {
+    const sellerId = process.env.AMAZON_SELLER_ID!;
+    await withRetry(() =>
+      amazonFetch(`/listings/2021-08-01/items/${sellerId}/${externalId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          productType: "SHIRT",
+          patches: [{
+            op: "replace",
+            path: "/attributes/item_name",
+            value: [{ value: title.slice(0, 200), marketplace_id: "ATVPDKIKX0DER" }],
+          }],
+        }),
+      }),
+    );
+  },
+
+  async updatePrice(externalId: string, price: number): Promise<void> {
+    const sellerId = process.env.AMAZON_SELLER_ID!;
+    await withRetry(() =>
+      amazonFetch(`/listings/2021-08-01/items/${sellerId}/${externalId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          productType: "SHIRT",
+          patches: [{
+            op: "replace",
+            path: "/attributes/list_price",
+            value: [{ value: price, currency: "USD", marketplace_id: "ATVPDKIKX0DER" }],
+          }],
+        }),
+      }),
+    );
+  },
+
   getListingFee() {
     return 0.99;
   },

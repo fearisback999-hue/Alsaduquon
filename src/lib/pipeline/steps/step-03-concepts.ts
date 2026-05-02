@@ -9,7 +9,7 @@ import { fullModeration } from "@/lib/ai/moderation";
 import { enforcebudget } from "@/lib/cost/guard";
 import { formatSalesContextForConcepts } from "@/lib/pipeline/sales-feedback";
 import { formatSeasonalContext } from "@/lib/pipeline/seasonal-calendar";
-import { formatDesignPerformanceForConcepts } from "@/lib/analytics/design-performance";
+import { formatDesignPerformanceForConcepts, getNicheImageRejectionRate } from "@/lib/analytics/design-performance";
 import { log } from "@/lib/logger";
 import { sanitizeForPrompt } from "@/lib/ai/sanitize";
 
@@ -40,8 +40,21 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
   let totalConcepts = 0;
   let moderationRejects = 0;
+  let nichesSkippedForFailures = 0;
+
+  const REJECTION_RATE_THRESHOLD = 0.7;
+  const MIN_ATTEMPTS_FOR_SKIP = 6;
 
   for (const niche of approvedNiches) {
+    // Skip niches whose images keep failing the quality gate. They burn
+    // generation budget without producing anything publishable.
+    const { rejectionRate, totalAttempts } = await getNicheImageRejectionRate(niche.id);
+    if (totalAttempts >= MIN_ATTEMPTS_FOR_SKIP && rejectionRate >= REJECTION_RATE_THRESHOLD) {
+      log("warn", `[Step 03] Skipping "${niche.name}" — ${(rejectionRate * 100).toFixed(0)}% image rejection rate over ${totalAttempts} recent attempts`);
+      nichesSkippedForFailures++;
+      continue;
+    }
+
     await enforcebudget(0.05);
     const safeNicheName = sanitizeForPrompt(niche.name);
 
@@ -202,7 +215,7 @@ Return JSON:
 
   return {
     status: "completed",
-    message: `Generated ${totalConcepts} concepts across ${approvedNiches.length} niches (${moderationRejects} rejected by moderation)`,
-    data: { totalConcepts, moderationRejects, nichesProcessed: approvedNiches.length },
+    message: `Generated ${totalConcepts} concepts across ${approvedNiches.length} niches (${moderationRejects} rejected by moderation, ${nichesSkippedForFailures} niches skipped for high image rejection rate)`,
+    data: { totalConcepts, moderationRejects, nichesProcessed: approvedNiches.length, nichesSkippedForFailures },
   };
 }

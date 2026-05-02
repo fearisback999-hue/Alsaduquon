@@ -110,6 +110,27 @@ export const tiktokStrategy: PlatformStrategy = {
     );
   },
 
+  async updateTitle(externalId: string, title: string): Promise<void> {
+    await withRetry(() =>
+      tiktokFetch("/api/products", {
+        method: "PUT",
+        body: JSON.stringify({ product_id: externalId, product_name: title.slice(0, 100) }),
+      }),
+    );
+  },
+
+  async updatePrice(externalId: string, price: number): Promise<void> {
+    await withRetry(() =>
+      tiktokFetch("/api/products/prices/update", {
+        method: "POST",
+        body: JSON.stringify({
+          product_id: externalId,
+          skus: [{ original_price: String(price) }],
+        }),
+      }),
+    );
+  },
+
   getListingFee() {
     return 0;
   },

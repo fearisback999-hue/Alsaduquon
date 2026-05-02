@@ -1,7 +1,8 @@
 import { db } from "@/lib/db";
 import { listings, listingMetrics, printifyProducts, designConcepts, niches } from "@/lib/db/schema";
 import { eq, and, gt, lt, sql } from "drizzle-orm";
-import * as etsy from "@/lib/external/etsy";
+import { getPlatform } from "@/lib/platforms/registry";
+import { UnsupportedPlatformOperation, type PlatformId } from "@/lib/platforms/types";
 import { log } from "@/lib/logger";
 import { ETSY_LISTING_FEE, ETSY_TRANSACTION_FEE_PERCENT } from "@/lib/types";
 
@@ -80,13 +81,25 @@ export async function runRepricing(): Promise<RepricingResult> {
         continue;
       }
 
-      // Only reprice on platforms where we can sync the price externally.
-      // Currently only Etsy has a price-update API wired up.
-      if (listingRecord.platform === "etsy") {
-        await etsy.updateListing(parseInt(candidate.externalListingId), {
-          price: newPrice,
-        });
-      } else {
+      const platform = getPlatform(listingRecord.platform as PlatformId);
+      if (!platform) {
+        result.skipped++;
+        continue;
+      }
+
+      // Sync price to the external platform first; only persist to DB if
+      // that succeeds. Any failure (including UnsupportedPlatformOperation)
+      // skips this listing rather than letting DB and external state drift.
+      try {
+        await platform.updatePrice(candidate.externalListingId, newPrice);
+      } catch (err) {
+        if (err instanceof UnsupportedPlatformOperation) {
+          log("info", `Skipping repricing for ${listingRecord.platform} listing ${candidate.listingId} — platform does not support price updates`);
+        } else {
+          log("error", `External price update failed for ${listingRecord.platform} listing ${candidate.listingId}`, {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
         result.skipped++;
         continue;
       }
@@ -99,7 +112,7 @@ export async function runRepricing(): Promise<RepricingResult> {
         })
         .where(eq(listings.id, candidate.listingId));
 
-      log("info", `Repriced "${candidate.nicheName}" ${candidate.productType}: $${candidate.currentPrice} → $${newPrice} (${action.reason})`);
+      log("info", `Repriced "${candidate.nicheName}" ${candidate.productType} on ${listingRecord.platform}: $${candidate.currentPrice} → $${newPrice} (${action.reason})`);
 
       result.adjusted++;
       if (newPrice > candidate.currentPrice) result.raised++;

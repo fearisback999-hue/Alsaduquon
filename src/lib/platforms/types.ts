@@ -36,10 +36,30 @@ export interface PlatformStrategy {
   uploadImages(externalId: string, imageUrls: string[]): Promise<void>;
   publishListing(externalId: string): Promise<void>;
   deactivateListing(externalId: string): Promise<void>;
+  /**
+   * Update the listing price on the external platform. Throws
+   * UnsupportedPlatformOperation if the platform's API doesn't support
+   * price updates so the optimizer can skip-with-reason instead of
+   * silently letting DB and external state drift apart.
+   */
+  updatePrice(externalId: string, price: number): Promise<void>;
+  /**
+   * Update the listing title for A/B variant rotation. Throws
+   * UnsupportedPlatformOperation if the platform doesn't support title
+   * updates.
+   */
+  updateTitle(externalId: string, title: string): Promise<void>;
   getListingFee(): number;
   getMaxTitleLength(): number;
   getMaxTags(): number;
   getSEOHints(): PlatformSEOHints;
+}
+
+export class UnsupportedPlatformOperation extends Error {
+  constructor(public readonly platform: PlatformId, public readonly operation: string) {
+    super(`Platform ${platform} does not support ${operation}`);
+    this.name = "UnsupportedPlatformOperation";
+  }
 }
 
 export const PLATFORM_DISPLAY: Record<PlatformId, { name: string; color: string }> = {

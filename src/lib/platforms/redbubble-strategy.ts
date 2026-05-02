@@ -1,4 +1,4 @@
-import type { PlatformStrategy, PlatformListingResult, ListingInput, PlatformSEOHints } from "./types";
+import { type PlatformStrategy, type PlatformListingResult, type ListingInput, type PlatformSEOHints, UnsupportedPlatformOperation } from "./types";
 import { ExternalAPIError } from "@/lib/errors";
 import { withRetry } from "@/lib/retry";
 import { rateLimit } from "@/lib/external/rate-limiter";
@@ -84,6 +84,18 @@ export const redbubbleStrategy: PlatformStrategy = {
     await withRetry(() =>
       redbubbleFetch(`/artworks/${externalId}/unpublish`, { method: "PUT" }),
     );
+  },
+
+  async updateTitle(_externalId: string, _title: string): Promise<void> {
+    // Redbubble artworks are immutable after publishing — title cannot be edited.
+    throw new UnsupportedPlatformOperation("redbubble", "updateTitle");
+  },
+
+  async updatePrice(_externalId: string, _price: number): Promise<void> {
+    // Redbubble pricing is set per product type via markup percentage on the
+    // artist account, not per individual artwork. Per-listing price updates
+    // are not supported by the public API.
+    throw new UnsupportedPlatformOperation("redbubble", "updatePrice");
   },
 
   getListingFee() {

@@ -3,7 +3,7 @@ import { designConcepts, generatedImages } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { analyzeImage } from "@/lib/ai/client";
 import { generateImageFlux } from "@/lib/ai/providers";
-import { ImageQualitySchema } from "@/lib/ai/schemas";
+import { ImageQualitySchema, type ImageQuality } from "@/lib/ai/schemas";
 import { trackImageUsage, trackTextUsage } from "@/lib/ai/token-tracker";
 import { enforcebudget } from "@/lib/cost/guard";
 import { uploadImageBuffer } from "@/lib/images/storage";
@@ -16,8 +16,7 @@ const QUALITY_SYSTEM_PROMPT = "You are a print-on-demand quality inspector. Eval
 /**
  * Returns the best Flux aspect ratio for a concept's recommended product mix.
  * Posters/canvas are art pieces — portrait. Apparel chest prints stay square.
- * Phone cases need tall narrow. Mugs print as a wraparound but the customer
- * sees the front face, so square works there too.
+ * Phone cases need tall narrow.
  */
 function getAspectRatioForConcept(recommendedProducts: string[] | null): "1:1" | "3:4" | "4:3" | "9:16" {
   if (!recommendedProducts || recommendedProducts.length === 0) return "1:1";
@@ -57,6 +56,117 @@ Return JSON:
 An image passes if overall_score >= 7 AND no individual score is below 5.`;
 }
 
+interface DesignConceptRow {
+  id: string;
+  nicheId: string;
+  title: string;
+  description: string | null;
+  stylePrompt: string | null;
+  designType: string | null;
+  colorPalette: string | null;
+}
+
+interface RawCandidate {
+  stored: { url: string; pathname: string };
+  durationMs: number;
+}
+
+/**
+ * Generates one image candidate (Flux or DALL-E) and uploads it to blob storage.
+ * No quality gate, no text overlay — pure raw output.
+ */
+async function generateOneCandidate(
+  concept: DesignConceptRow,
+  prompt: string,
+  attempt: number,
+  candidateLetter: string,
+  useFlux: boolean,
+): Promise<RawCandidate> {
+  const startTime = Date.now();
+  let stored: { url: string; pathname: string };
+
+  if (useFlux) {
+    let recommendedProducts: string[] | null = null;
+    try {
+      const palette = JSON.parse(concept.colorPalette ?? "{}");
+      recommendedProducts = palette.recommended_products ?? null;
+    } catch { /* ignore */ }
+    const aspectRatio = getAspectRatioForConcept(recommendedProducts);
+    const result = await generateImageFlux(prompt, { aspectRatio, raw: true });
+    stored = await uploadImageBuffer(
+      result.buffer,
+      `designs/${concept.nicheId}/${concept.id}-a${attempt}${candidateLetter}.png`,
+    );
+  } else {
+    const { generateImage } = await import("@/lib/ai/client");
+    const result = await generateImage(prompt, { quality: "hd", size: "1024x1024" });
+    const { persistImage } = await import("@/lib/images/storage");
+    stored = await persistImage(
+      result.url,
+      `designs/${concept.nicheId}/${concept.id}-a${attempt}${candidateLetter}.png`,
+    );
+  }
+
+  return { stored, durationMs: Date.now() - startTime };
+}
+
+/**
+ * Renders typography text on top of a generated image. Returns the new
+ * stored URL/path on success, or null on failure (caller falls back to
+ * the original raw image).
+ */
+async function applyTextOverlayIfNeeded(
+  concept: DesignConceptRow,
+  stored: { url: string; pathname: string },
+  outputPath: string,
+): Promise<{ url: string; pathname: string } | null> {
+  if (concept.designType !== "typography" && concept.designType !== "hybrid") {
+    return null;
+  }
+  const displayText = extractDisplayText(concept.title, concept.description ?? "");
+  if (!displayText) return null;
+
+  try {
+    const bgResponse = await fetch(stored.url);
+    const bgBuffer = Buffer.from(await bgResponse.arrayBuffer());
+    const colors = await pickTextColor(bgBuffer);
+
+    let styleCategory = "default";
+    try {
+      const palette = JSON.parse(concept.colorPalette ?? "{}");
+      styleCategory = palette.style_category ?? "default";
+    } catch { /* ignore */ }
+
+    const rendered = await renderTextOnBackground({
+      text: displayText,
+      backgroundBuffer: bgBuffer,
+      fontFamily: styleCategory,
+      color: colors.textColor,
+      strokeColor: colors.strokeColor,
+    });
+
+    const newStored = await uploadImageBuffer(rendered.buffer, outputPath);
+    log("info", `[Step 04] Text overlay applied: "${displayText}" on ${concept.title}`);
+    return newStored;
+  } catch (textErr) {
+    log("warn", `[Step 04] Text overlay failed for ${concept.title}, using raw output`, {
+      error: textErr instanceof Error ? textErr.message : String(textErr),
+    });
+    return null;
+  }
+}
+
+function serializeQualityScores(quality: ImageQuality): string {
+  return JSON.stringify({
+    composition: quality.composition,
+    text_legibility: quality.text_legibility,
+    print_suitability: quality.print_suitability,
+    commercial_appeal: quality.commercial_appeal,
+    technical_quality: quality.technical_quality,
+    overall_score: quality.overall_score,
+  });
+}
+
 export default async function execute(context: PipelineContext): Promise<StepResult> {
   if (context.dryRun) {
     return { status: "completed", message: "Dry run: skipped image generation" };
@@ -72,7 +182,6 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     return { status: "completed", message: "No concepts ready for image generation" };
   }
 
-  // Determine which image generator to use
   const useFlux = !!process.env.REPLICATE_API_TOKEN;
   const generatorName = useFlux ? "flux-1.1-pro-ultra" : "dall-e-3";
   const imageCost = useFlux ? FLUX_PRO_ULTRA_COST : 0.08;
@@ -88,159 +197,138 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     let currentPrompt = concept.stylePrompt ?? concept.title;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      await enforcebudget(imageCost + GPT4O_VISION_COST_ESTIMATE);
+      // Best-of-2 on attempt 1: generate 2 candidates in parallel and pick
+      // the higher-scoring one. Doubles attempt-1 cost but dramatically
+      // improves quality and often avoids retries (which cost the same).
+      const candidateCount = attempt === 1 ? 2 : 1;
+      await enforcebudget((imageCost + GPT4O_VISION_COST_ESTIMATE) * candidateCount);
 
       try {
-        const startTime = Date.now();
-
-        let stored: { url: string; pathname: string };
-
-        if (useFlux) {
-          // Flux 1.1 Pro Ultra — returns a buffer directly. Aspect ratio
-          // is picked based on the concept's primary product type.
-          let recommendedProducts: string[] | null = null;
-          try {
-            const palette = JSON.parse(concept.colorPalette ?? "{}");
-            recommendedProducts = palette.recommended_products ?? null;
-          } catch { /* ignore */ }
-          const aspectRatio = getAspectRatioForConcept(recommendedProducts);
-          const result = await generateImageFlux(currentPrompt, { aspectRatio, raw: true });
-          stored = await uploadImageBuffer(
-            result.buffer,
-            `designs/${concept.nicheId}/${concept.id}-attempt${attempt}.png`,
-          );
-        } else {
-          // Fallback to DALL-E 3
-          const { generateImage } = await import("@/lib/ai/client");
-          const result = await generateImage(currentPrompt, { quality: "hd", size: "1024x1024" });
-          const { persistImage } = await import("@/lib/images/storage");
-          stored = await persistImage(result.url, `designs/${concept.nicheId}/${concept.id}-attempt${attempt}.png`);
-        }
-
-        const durationMs = Date.now() - startTime;
-
-        // TEXT OVERLAY: For typography/hybrid designs, render text programmatically
-        if (concept.designType === "typography" || concept.designType === "hybrid") {
-          const displayText = extractDisplayText(concept.title, concept.description ?? "");
-          if (displayText) {
-            try {
-              const bgResponse = await fetch(stored.url);
-              const bgBuffer = Buffer.from(await bgResponse.arrayBuffer());
-              const colors = await pickTextColor(bgBuffer);
-
-              let styleCategory = "default";
-              try {
-                const palette = JSON.parse(concept.colorPalette ?? "{}");
-                styleCategory = palette.style_category ?? "default";
-              } catch { /* ignore */ }
-
-              const rendered = await renderTextOnBackground({
-                text: displayText,
-                backgroundBuffer: bgBuffer,
-                fontFamily: styleCategory,
-                color: colors.textColor,
-                strokeColor: colors.strokeColor,
-              });
-
-              stored = await uploadImageBuffer(
-                rendered.buffer,
-                `designs/${concept.nicheId}/${concept.id}-attempt${attempt}-text.png`,
-              );
-              log("info", `[Step 04] Text overlay applied: "${displayText}" on ${concept.title}`);
-            } catch (textErr) {
-              log("warn", `[Step 04] Text overlay failed for ${concept.title}, using raw output`, {
-                error: textErr instanceof Error ? textErr.message : String(textErr),
-              });
-            }
-          }
-        }
-
-        await trackImageUsage({
-          model: generatorName,
-          operation: "image_generation",
-          quality: useFlux ? "flux" : "hd",
-          durationMs,
-          pipelineRunId: context.pipelineRunId,
-        });
-        totalCost += imageCost;
-
-        // QUALITY GATE: Evaluate with GPT-4o Vision
-        const qualityCheck = await analyzeImage(
-          stored.url,
-          buildQualityPrompt(concept.stylePrompt ?? concept.title),
-          {
-            systemPrompt: QUALITY_SYSTEM_PROMPT,
-            maxTokens: 400,
-            temperature: 0.2,
-            schema: ImageQualitySchema,
-            schemaName: "image_quality",
-          },
+        const candidates: RawCandidate[] = await Promise.all(
+          Array.from({ length: candidateCount }, (_, i) =>
+            generateOneCandidate(concept, currentPrompt, attempt, String.fromCharCode(97 + i), useFlux),
+          ),
         );
 
-        await trackTextUsage({
-          model: qualityCheck.model,
-          operation: "image_quality_check",
-          inputTokens: qualityCheck.inputTokens,
-          outputTokens: qualityCheck.outputTokens,
-          pipelineRunId: context.pipelineRunId,
+        for (const c of candidates) {
+          await trackImageUsage({
+            model: generatorName,
+            operation: "image_generation",
+            quality: useFlux ? "flux" : "hd",
+            durationMs: c.durationMs,
+            pipelineRunId: context.pipelineRunId,
+          });
+          totalCost += imageCost;
+        }
+
+        // Score all candidates in parallel
+        const scoreResults = await Promise.all(
+          candidates.map((c) =>
+            analyzeImage(
+              c.stored.url,
+              buildQualityPrompt(concept.stylePrompt ?? concept.title),
+              {
+                systemPrompt: QUALITY_SYSTEM_PROMPT,
+                maxTokens: 400,
+                temperature: 0.2,
+                schema: ImageQualitySchema,
+                schemaName: "image_quality",
+              },
+            ),
+          ),
+        );
+
+        for (const score of scoreResults) {
+          await trackTextUsage({
+            model: score.model,
+            operation: "image_quality_check",
+            inputTokens: score.inputTokens,
+            outputTokens: score.outputTokens,
+            pipelineRunId: context.pipelineRunId,
+          });
+          totalCost += GPT4O_VISION_COST_ESTIMATE;
+        }
+
+        // Rank candidates: passing first, then by overall_score descending
+        const ranked = candidates.map((c, i) => ({ ...c, quality: scoreResults[i].parsed }));
+        ranked.sort((a, b) => {
+          const aPass = a.quality?.pass ? 1 : 0;
+          const bPass = b.quality?.pass ? 1 : 0;
+          if (aPass !== bPass) return bPass - aPass;
+          return (b.quality?.overall_score ?? 0) - (a.quality?.overall_score ?? 0);
         });
-        totalCost += GPT4O_VISION_COST_ESTIMATE;
 
-        const quality = qualityCheck.parsed;
+        const winner = ranked[0];
+        const losers = ranked.slice(1);
 
-        if (quality && !quality.pass && attempt < maxAttempts) {
+        // Persist losers for analytics — they contributed to the cost
+        for (const loser of losers) {
+          await context.db.insert(generatedImages).values({
+            designConceptId: concept.id,
+            prompt: currentPrompt,
+            storagePath: loser.stored.pathname,
+            storageUrl: loser.stored.url,
+            model: generatorName,
+            size: "1024x1024",
+            quality: "hd",
+            attempt,
+            maxAttempts,
+            status: "rejected",
+            qualityScores: loser.quality ? serializeQualityScores(loser.quality) : null,
+            errorMessage: JSON.stringify({
+              reason: "best_of_n_loser",
+              winnerScore: winner.quality?.overall_score,
+              loserScore: loser.quality?.overall_score,
+            }),
+            pipelineRunId: context.pipelineRunId,
+          });
+        }
+
+        // Winner failed — refine and retry
+        if (winner.quality && !winner.quality.pass && attempt < maxAttempts) {
           qualityRejected++;
           await context.db.insert(generatedImages).values({
             designConceptId: concept.id,
             prompt: currentPrompt,
-            storagePath: stored.pathname,
-            storageUrl: stored.url,
+            storagePath: winner.stored.pathname,
+            storageUrl: winner.stored.url,
             model: generatorName,
             size: "1024x1024",
-            quality: useFlux ? "hd" : "hd",
+            quality: "hd",
             attempt,
             maxAttempts,
             status: "rejected",
-            qualityScores: JSON.stringify({
-              composition: quality.composition,
-              text_legibility: quality.text_legibility,
-              print_suitability: quality.print_suitability,
-              commercial_appeal: quality.commercial_appeal,
-              technical_quality: quality.technical_quality,
-              overall_score: quality.overall_score,
-            }),
-            errorMessage: JSON.stringify({
-              reason: "quality_gate",
-              scores: quality,
-            }),
+            qualityScores: serializeQualityScores(winner.quality),
+            errorMessage: JSON.stringify({ reason: "quality_gate", scores: winner.quality }),
             pipelineRunId: context.pipelineRunId,
           });
 
-          const issues = quality.issues.join(", ");
-          currentPrompt = `${concept.stylePrompt ?? concept.title}. IMPORTANT: Avoid these issues: ${issues}. ${quality.refinement_suggestion}`;
+          const issues = winner.quality.issues.join(", ");
+          currentPrompt = `${concept.stylePrompt ?? concept.title}. IMPORTANT: Avoid these issues: ${issues}. ${winner.quality.refinement_suggestion}`;
           continue;
         }
 
-        // Quality passed
+        // Winner passed — apply text overlay if needed
+        let finalStored = winner.stored;
+        const overlayResult = await applyTextOverlayIfNeeded(
+          concept,
+          winner.stored,
+          `designs/${concept.nicheId}/${concept.id}-a${attempt}-text.png`,
+        );
+        if (overlayResult) finalStored = overlayResult;
+
         const [image] = await context.db.insert(generatedImages).values({
           designConceptId: concept.id,
           prompt: currentPrompt,
-          storagePath: stored.pathname,
-          storageUrl: stored.url,
+          storagePath: finalStored.pathname,
+          storageUrl: finalStored.url,
           model: generatorName,
           size: "1024x1024",
           quality: "hd",
           attempt,
           maxAttempts,
           status: "generated",
-          qualityScores: quality ? JSON.stringify({
-            composition: quality.composition,
-            text_legibility: quality.text_legibility,
-            print_suitability: quality.print_suitability,
-            commercial_appeal: quality.commercial_appeal,
-            technical_quality: quality.technical_quality,
-            overall_score: quality.overall_score,
-          }) : null,
+          qualityScores: winner.quality ? serializeQualityScores(winner.quality) : null,
           pipelineRunId: context.pipelineRunId,
         }).returning();
 
@@ -270,14 +358,13 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     }
 
     if (imageGenerated) {
-      // Rate limit: Flux is faster than DALL-E but still throttle
       await new Promise((resolve) => setTimeout(resolve, useFlux ? 3000 : 12000));
     }
   }
 
   return {
     status: "completed",
-    message: `Generated ${generated} images via ${generatorName}, ${failed} failed, ${qualityRejected} quality rejections (cost: $${totalCost.toFixed(2)})`,
+    message: `Generated ${generated} images via ${generatorName} (best-of-2 first attempt), ${failed} failed, ${qualityRejected} quality rejections (cost: $${totalCost.toFixed(2)})`,
     cost: totalCost,
     data: { generated, failed, qualityRejected, totalCost, generator: generatorName },
   };

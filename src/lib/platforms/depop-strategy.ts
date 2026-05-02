@@ -1,4 +1,4 @@
-import type { PlatformStrategy, PlatformListingResult, ListingInput, PlatformSEOHints } from "./types";
+import { type PlatformStrategy, type PlatformListingResult, type ListingInput, type PlatformSEOHints, UnsupportedPlatformOperation } from "./types";
 import { ExternalAPIError } from "@/lib/errors";
 import { withRetry } from "@/lib/retry";
 import { rateLimit } from "@/lib/external/rate-limiter";
@@ -73,6 +73,21 @@ export const depopStrategy: PlatformStrategy = {
   async deactivateListing(externalId: string): Promise<void> {
     await withRetry(() =>
       depopFetch(`/products/${externalId}/archive`, { method: "PUT" }),
+    );
+  },
+
+  async updateTitle(_externalId: string, _title: string): Promise<void> {
+    // Depop has no separate title field — the first line of description is
+    // the headline, and updating it via PATCH is not exposed by the public API.
+    throw new UnsupportedPlatformOperation("depop", "updateTitle");
+  },
+
+  async updatePrice(externalId: string, price: number): Promise<void> {
+    await withRetry(() =>
+      depopFetch(`/products/${externalId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ price: { amount: String(price), currency: "USD" } }),
+      }),
     );
   },
 

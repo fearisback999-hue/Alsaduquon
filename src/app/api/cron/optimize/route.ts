@@ -10,6 +10,7 @@ import * as etsy from "@/lib/external/etsy";
 import { log } from "@/lib/logger";
 import { verifyCronSecret } from "@/lib/auth/cron-auth";
 import { runRepricing } from "@/lib/pricing/optimizer";
+import { rotateTitleVariants } from "@/lib/pricing/title-rotator";
 import { amplifyWinningNiches } from "@/lib/pipeline/winner-amplification";
 import { pruneDeadNiches, pruneSaturatedNiches } from "@/lib/pipeline/niche-pruning";
 
@@ -44,6 +45,11 @@ export async function GET(request: NextRequest) {
     // means we're competing in too crowded a market. Frees budget for fresh niches.
     const saturationResult = await pruneSaturatedNiches();
     log("info", `Saturation: paused ${saturationResult.exhausted} saturated niches`);
+
+    // Phase 4: Rotate A/B title variants on listings that have been live on
+    // their current variant for the rotation interval (14 days).
+    const titleRotation = await rotateTitleVariants();
+    log("info", `Title rotation: rotated ${titleRotation.rotated}, finalized ${titleRotation.finalized} of ${titleRotation.evaluated} eligible`);
 
     // Find underperforming listings:
     // Published 14+ days ago, has views but low conversion (<1%)
@@ -184,6 +190,7 @@ Return JSON:
       amplification: amplificationResult,
       pruning: { exhausted: pruningResult.exhausted },
       saturation: { paused: saturationResult.exhausted },
+      titleRotation,
     });
   } catch (error) {
     log("error", "Optimization cron failed", { error: error instanceof Error ? error.message : String(error) });

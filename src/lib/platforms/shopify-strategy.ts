@@ -90,6 +90,31 @@ export const shopifyStrategy: PlatformStrategy = {
     );
   },
 
+  async updateTitle(externalId: string, title: string): Promise<void> {
+    await withRetry(() =>
+      shopifyFetch(`/products/${externalId}.json`, {
+        method: "PUT",
+        body: JSON.stringify({ product: { id: Number(externalId), title: title.slice(0, 255) } }),
+      }),
+    );
+  },
+
+  async updatePrice(externalId: string, price: number): Promise<void> {
+    // Shopify prices live on variants, not products. Fetch the product first
+    // to get its primary variant id, then update the variant.
+    const product = (await withRetry(() => shopifyFetch(`/products/${externalId}.json`))) as {
+      product: { variants: Array<{ id: number }> };
+    };
+    const variantId = product.product.variants[0]?.id;
+    if (!variantId) throw new ExternalAPIError("Shopify", 404, "No variant found for product");
+    await withRetry(() =>
+      shopifyFetch(`/variants/${variantId}.json`, {
+        method: "PUT",
+        body: JSON.stringify({ variant: { id: variantId, price: String(price) } }),
+      }),
+    );
+  },
+
   getListingFee() {
     return 0;
   },

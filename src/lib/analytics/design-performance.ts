@@ -7,8 +7,9 @@ import {
   niches,
   listingMetrics,
   nicheAnalytics,
+  generatedImages,
 } from "@/lib/db/schema";
-import { eq, desc, sql, gte } from "drizzle-orm";
+import { eq, desc, sql, gte, and } from "drizzle-orm";
 import { log } from "@/lib/logger";
 
 interface DesignPerformance {
@@ -248,6 +249,45 @@ export async function formatDesignPerformanceForConcepts(nicheName: string): Pro
   }
 
   return sections.length > 0 ? "\nDESIGN PERFORMANCE DATA:\n" + sections.join("\n") : "";
+}
+
+/**
+ * Returns the recent image-quality rejection rate for a niche.
+ * Used by Step 03 to skip concept generation for niches whose images
+ * keep failing the quality gate — saving budget and operator time.
+ *
+ * Looks at the last `lookbackDays` worth of generatedImages rows joined
+ * back to designConcepts → niches. Returns rejectionRate as a fraction
+ * (0..1) and totalAttempts so the caller can require a minimum sample
+ * before acting on the signal.
+ */
+export async function getNicheImageRejectionRate(
+  nicheId: string,
+  lookbackDays = 30,
+): Promise<{ rejectionRate: number; totalAttempts: number }> {
+  const cutoff = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
+
+  try {
+    const row = await db
+      .select({
+        rejected: sql<number>`sum(case when ${generatedImages.status} = 'rejected' then 1 else 0 end)`,
+        total: sql<number>`count(*)`,
+      })
+      .from(generatedImages)
+      .innerJoin(designConcepts, eq(generatedImages.designConceptId, designConcepts.id))
+      .where(and(eq(designConcepts.nicheId, nicheId), gte(generatedImages.createdAt, cutoff)))
+      .get();
+
+    const total = row?.total ?? 0;
+    const rejected = row?.rejected ?? 0;
+    if (total === 0) return { rejectionRate: 0, totalAttempts: 0 };
+    return { rejectionRate: rejected / total, totalAttempts: total };
+  } catch (error) {
+    log("error", "Failed to compute niche image rejection rate", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { rejectionRate: 0, totalAttempts: 0 };
+  }
 }
 
 /**

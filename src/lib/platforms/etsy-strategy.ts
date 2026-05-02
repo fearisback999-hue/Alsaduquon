@@ -40,6 +40,14 @@ export const etsyStrategy: PlatformStrategy = {
     await etsyClient.updateListing(Number(externalId), { state: "inactive" });
   },
 
+  async updatePrice(externalId: string, price: number): Promise<void> {
+    await etsyClient.updateListing(Number(externalId), { price });
+  },
+
+  async updateTitle(externalId: string, title: string): Promise<void> {
+    await etsyClient.updateListing(Number(externalId), { title: title.slice(0, 140) });
+  },
+
   getListingFee() {
     return 0.20;
   },
