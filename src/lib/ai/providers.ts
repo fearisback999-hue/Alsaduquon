@@ -1,7 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import Replicate from "replicate";
 import type { z } from "zod";
-import { log } from "@/lib/logger";
 
 // ============================================================
 // ANTHROPIC (CLAUDE) — creative text, listing copy, concepts
@@ -52,20 +51,27 @@ export async function claudeCompletion<T = unknown>(
 
   let parsed: T | null = null;
   if (options?.schema) {
-    try {
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const raw = JSON.parse(jsonMatch[0]);
-        const result = options.schema.safeParse(raw);
-        if (result.success) {
-          parsed = result.data;
-        } else {
-          log("warn", `Claude structured output validation failed: ${result.error.issues.map((i) => i.message).join(", ")}`);
-        }
-      }
-    } catch {
-      log("warn", "Claude response JSON parse failed");
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new ClaudeStructuredOutputError("No JSON object found in Claude response", content);
     }
+    let raw: unknown;
+    try {
+      raw = JSON.parse(jsonMatch[0]);
+    } catch (err) {
+      throw new ClaudeStructuredOutputError(
+        `JSON parse failed: ${err instanceof Error ? err.message : String(err)}`,
+        content,
+      );
+    }
+    const result = options.schema.safeParse(raw);
+    if (!result.success) {
+      throw new ClaudeStructuredOutputError(
+        `Schema validation failed: ${result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`,
+        content,
+      );
+    }
+    parsed = result.data;
   }
 
   return {
@@ -75,6 +81,13 @@ export async function claudeCompletion<T = unknown>(
     outputTokens: response.usage.output_tokens,
     model,
   };
+}
+
+export class ClaudeStructuredOutputError extends Error {
+  constructor(message: string, public readonly rawContent: string) {
+    super(message);
+    this.name = "ClaudeStructuredOutputError";
+  }
 }
 
 export async function claudeAnalyzeImage<T = unknown>(

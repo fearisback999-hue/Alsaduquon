@@ -38,7 +38,7 @@ Return JSON:
   "refinement_suggestion": "<how to improve the prompt if this fails>"
 }
 
-An image passes if overall_score >= 6 AND no individual score is below 4.`;
+An image passes if overall_score >= 7 AND no individual score is below 5.`;
 }
 
 export default async function execute(context: PipelineContext): Promise<StepResult> {

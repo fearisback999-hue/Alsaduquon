@@ -15,14 +15,14 @@ const AUTO_APPROVAL_THRESHOLD = 0.75;
 // Hard quality gates — auto-approval requires the GPT-4o vision check
 // to score the image at or above these floors. A weak image cannot be
 // auto-approved no matter how strong the niche or SEO factors are.
-const MIN_OVERALL_SCORE = 8;
+const MIN_OVERALL_SCORE = 7.5;
 const MIN_TEXT_LEGIBILITY = 7;
 const MIN_PRINT_SUITABILITY = 7;
 const MIN_TECHNICAL_QUALITY = 7;
 
 // Training-wheels default: require this many manually-reviewed approvals
 // before any auto-approval is allowed. Tunable via settings.
-const DEFAULT_TRAINING_WHEELS_MIN_REVIEWS = 20;
+const DEFAULT_TRAINING_WHEELS_MIN_REVIEWS = 10;
 
 async function getTrainingWheelsState(): Promise<{ enabled: boolean; required: number; completed: number }> {
   const enabledSetting = await db.select().from(settings).where(eq(settings.key, "training_wheels_enabled")).get();

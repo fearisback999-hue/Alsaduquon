@@ -12,7 +12,7 @@ const DEFAULT_SETTINGS = [
   { key: "approval_batch_size", value: "5", type: "number" as const, group: "pipeline" as const, description: "Number of listings per approval batch" },
   { key: "approval_mode", value: "manual", type: "string" as const, group: "pipeline" as const, description: "Approval mode: manual or auto" },
   { key: "training_wheels_enabled", value: "true", type: "boolean" as const, group: "pipeline" as const, description: "Block auto-approval until N manual reviews are completed (safety for new shops)" },
-  { key: "training_wheels_min_reviews", value: "20", type: "number" as const, group: "pipeline" as const, description: "Manual approvals required before auto-approval activates" },
+  { key: "training_wheels_min_reviews", value: "10", type: "number" as const, group: "pipeline" as const, description: "Manual approvals required before auto-approval activates" },
   { key: "annual_revenue_goal", value: "150000", type: "number" as const, group: "general" as const, description: "Annual revenue target in USD for goal tracking" },
 
   // Pricing
@@ -22,8 +22,8 @@ const DEFAULT_SETTINGS = [
   { key: "max_tags", value: "13", type: "number" as const, group: "pricing" as const, description: "Maximum Etsy tags per listing" },
 
   // Limits
-  { key: "max_daily_cost", value: "10.00", type: "number" as const, group: "limits" as const, description: "Maximum daily spend in USD" },
-  { key: "max_daily_listings", value: "5", type: "number" as const, group: "limits" as const, description: "Maximum listings published per day" },
+  { key: "max_daily_cost", value: "30.00", type: "number" as const, group: "limits" as const, description: "Maximum daily spend in USD" },
+  { key: "max_daily_listings", value: "25", type: "number" as const, group: "limits" as const, description: "Maximum listings published per day" },
   { key: "max_products_per_design", value: "3", type: "number" as const, group: "limits" as const, description: "Max Printify products created per design concept" },
   { key: "pipeline_runs_per_day", value: "1", type: "number" as const, group: "limits" as const, description: "Pipeline runs per day (1 or 2). Second run at 2 PM UTC." },
 

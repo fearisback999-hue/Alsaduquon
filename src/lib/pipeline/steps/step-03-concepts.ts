@@ -3,7 +3,7 @@ import { niches, designConcepts } from "@/lib/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import { chatCompletion, StructuredOutputError } from "@/lib/ai/client";
 import { claudeCompletion } from "@/lib/ai/providers";
-import { DesignConceptsSchema } from "@/lib/ai/schemas";
+import { DesignConceptsSchema, type DesignConcept } from "@/lib/ai/schemas";
 import { trackTextUsage } from "@/lib/ai/token-tracker";
 import { fullModeration } from "@/lib/ai/moderation";
 import { enforcebudget } from "@/lib/cost/guard";
@@ -89,39 +89,51 @@ Return JSON:
   ]
 }`;
 
+    let concepts: DesignConcept[] = [];
+
     try {
       const useClaude = !!process.env.ANTHROPIC_API_KEY;
+      const MAX_DIVERSITY_RETRIES = 1;
 
-      const result = useClaude
-        ? await claudeCompletion(prompt, {
-            systemPrompt: SYSTEM_PROMPT,
-            maxTokens: 3000,
-            temperature: 0.8,
-            schema: DesignConceptsSchema,
-          })
-        : await chatCompletion(prompt, {
-            systemPrompt: SYSTEM_PROMPT,
-            maxTokens: 3000,
-            temperature: 0.8,
-            schema: DesignConceptsSchema,
-            schemaName: "design_concepts",
-          });
+      for (let attempt = 0; attempt <= MAX_DIVERSITY_RETRIES; attempt++) {
+        const attemptPrompt = attempt === 0
+          ? prompt
+          : `${prompt}\n\nIMPORTANT: Your previous attempt returned only "${Array.from(new Set(concepts.map((c) => c.design_type)))[0] ?? "one"}" design types. You MUST mix at least 2 different design_type values. Do not return all of one type.`;
 
-      await trackTextUsage({
-        model: result.model,
-        operation: "concept_generation",
-        inputTokens: result.inputTokens,
-        outputTokens: result.outputTokens,
-        pipelineRunId: context.pipelineRunId,
-        provider: useClaude ? "anthropic" : "openai",
-      });
+        const result = useClaude
+          ? await claudeCompletion(attemptPrompt, {
+              systemPrompt: SYSTEM_PROMPT,
+              maxTokens: 3000,
+              temperature: 0.65,
+              schema: DesignConceptsSchema,
+            })
+          : await chatCompletion(attemptPrompt, {
+              systemPrompt: SYSTEM_PROMPT,
+              maxTokens: 3000,
+              temperature: 0.65,
+              schema: DesignConceptsSchema,
+              schemaName: "design_concepts",
+            });
 
-      const concepts = result.parsed?.concepts ?? [];
+        await trackTextUsage({
+          model: result.model,
+          operation: "concept_generation",
+          inputTokens: result.inputTokens,
+          outputTokens: result.outputTokens,
+          pipelineRunId: context.pipelineRunId,
+          provider: useClaude ? "anthropic" : "openai",
+        });
 
-      // Soft diversity check — log warning but don't reject
-      const designTypes = new Set(concepts.map((c) => c.design_type));
-      if (designTypes.size < 2 && concepts.length >= 3) {
-        log("warn", `[Step 03] Low diversity for niche "${niche.name}": all concepts are ${Array.from(designTypes)[0]}`);
+        concepts = result.parsed?.concepts ?? [];
+
+        const designTypes = new Set(concepts.map((c) => c.design_type));
+        if (designTypes.size >= 2 || concepts.length < 3) break;
+
+        if (attempt < MAX_DIVERSITY_RETRIES) {
+          log("info", `[Step 03] Retrying "${niche.name}" — got ${designTypes.size} design type(s), need 2+`);
+        } else {
+          log("warn", `[Step 03] Diversity retry exhausted for "${niche.name}"; proceeding with ${designTypes.size} type(s)`);
+        }
       }
 
       for (let i = 0; i < concepts.length && i < 5; i++) {

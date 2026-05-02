@@ -10,6 +10,10 @@ interface UpscaleResult {
 /**
  * Upscales an image to print-ready dimensions.
  * DALL-E 3 outputs 1024x1024 — POD needs up to 4500x5400.
+ *
+ * Uses fit: "cover" with the lanczos3 kernel so the design fills the entire
+ * print area instead of being letterboxed with transparency. A minor edge
+ * crop is preferable to a tiny design floating in blank space on the print.
  */
 export async function upscaleForPrint(
   inputBuffer: Buffer,
@@ -18,10 +22,11 @@ export async function upscaleForPrint(
 ): Promise<UpscaleResult> {
   const result = await sharp(inputBuffer)
     .resize(targetWidth, targetHeight, {
-      fit: "contain",
-      background: { r: 0, g: 0, b: 0, alpha: 0 }, // Transparent background
+      fit: "cover",
+      kernel: sharp.kernel.lanczos3,
+      position: "center",
     })
-    .withMetadata({ density: 300 }) // 300 DPI
+    .withMetadata({ density: 300 })
     .png({ quality: 100, compressionLevel: 6 })
     .toBuffer({ resolveWithObject: true });
 

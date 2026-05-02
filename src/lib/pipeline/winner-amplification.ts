@@ -24,7 +24,7 @@ interface AmplificationCandidate {
 }
 
 const MIN_ORDERS_FOR_WINNER = 3;
-const MIN_CONVERSION_FOR_WINNER = 2.0;
+const MIN_CONVERSION_FOR_WINNER = 1.5;
 const MAX_VARIANTS_PER_WINNER = 5;
 const LOOKBACK_DAYS = 60;
 

@@ -4,7 +4,7 @@ import { eq, inArray } from "drizzle-orm";
 import { getEnabledPlatforms } from "@/lib/platforms/registry";
 import { generatePlatformTitle, generatePlatformDescription, generatePlatformTags, calculateSEOScore } from "@/lib/seo/platform-seo";
 import { getProductDisplayName } from "@/lib/printify/product-config";
-import { calculateDynamicPrice } from "@/lib/pricing/engine";
+import { calculateDynamicPrice, getTargetMargin } from "@/lib/pricing/engine";
 import { fullModeration } from "@/lib/ai/moderation";
 import { enforcebudget } from "@/lib/cost/guard";
 import { recordCost } from "@/lib/cost/guard";
@@ -52,13 +52,14 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     if (!concept || !niche) continue;
 
     const productDisplayName = getProductDisplayName(primaryProduct.productType);
+    const targetMargin = getTargetMargin(primaryProduct.productType, niche.competitionLevel);
     const pricing = calculateDynamicPrice({
       productType: primaryProduct.productType,
       baseCost: primaryProduct.baseCost ?? 15,
       nicheCompositeScore: niche.compositeScore ?? undefined,
       competitionLevel: niche.competitionLevel ?? undefined,
       trendDirection: niche.trendDirection ?? undefined,
-      marginPercent: 40,
+      marginPercent: targetMargin,
     });
     const retailPrice = pricing.retailPrice;
 
@@ -133,7 +134,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
           tags: JSON.stringify(tags),
           seoScore,
           basePrice: primaryProduct.baseCost ?? 15,
-          marginPercent: 40,
+          marginPercent: targetMargin,
           finalPrice: retailPrice,
           externalState: result.state,
           externalUrl: result.url,

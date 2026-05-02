@@ -119,3 +119,27 @@ export function calculateDynamicPrice(ctx: PricingContext): PricingResult {
 export function getTypicalCost(productType: string): number {
   return PRODUCT_PRICING[productType]?.typicalCost ?? 15;
 }
+
+// Premium products sustain higher margins (low price-elasticity, gift-friendly).
+const PREMIUM_PRODUCTS = new Set([
+  "canvas_print", "blanket", "throw_pillow", "hoodie", "crewneck_sweatshirt",
+]);
+// Commodity products compete on price; lower margin to stay listable.
+const COMMODITY_PRODUCTS = new Set(["sticker", "mousepad", "poster"]);
+
+/**
+ * Returns the target margin percent for a product, adjusted for niche
+ * competition. Replaces a single hardcoded 40% across all products.
+ */
+export function getTargetMargin(productType: string, competitionLevel?: number | null): number {
+  let margin = 40;
+  if (PREMIUM_PRODUCTS.has(productType)) margin = 50;
+  else if (COMMODITY_PRODUCTS.has(productType)) margin = 35;
+
+  if (competitionLevel != null) {
+    if (competitionLevel < 0.3) margin += 5;
+    else if (competitionLevel > 0.75) margin -= 3;
+  }
+
+  return Math.max(30, Math.min(55, margin));
+}
