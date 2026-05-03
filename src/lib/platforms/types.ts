@@ -28,6 +28,16 @@ export interface PlatformSEOHints {
   seoGuidance: string;
 }
 
+export interface PlatformOrderData {
+  externalOrderId: string;
+  externalListingId: string;
+  status: "new" | "processing" | "shipped" | "delivered" | "cancelled" | "refunded";
+  quantity: number;
+  revenue: number;
+  customerRegion?: string;
+  orderedAt: string;
+}
+
 export interface PlatformStrategy {
   id: PlatformId;
   name: string;
@@ -36,19 +46,9 @@ export interface PlatformStrategy {
   uploadImages(externalId: string, imageUrls: string[]): Promise<void>;
   publishListing(externalId: string): Promise<void>;
   deactivateListing(externalId: string): Promise<void>;
-  /**
-   * Update the listing price on the external platform. Throws
-   * UnsupportedPlatformOperation if the platform's API doesn't support
-   * price updates so the optimizer can skip-with-reason instead of
-   * silently letting DB and external state drift apart.
-   */
   updatePrice(externalId: string, price: number): Promise<void>;
-  /**
-   * Update the listing title for A/B variant rotation. Throws
-   * UnsupportedPlatformOperation if the platform doesn't support title
-   * updates.
-   */
   updateTitle(externalId: string, title: string): Promise<void>;
+  fetchRecentOrders(sinceDaysAgo?: number): Promise<PlatformOrderData[]>;
   getListingFee(): number;
   getMaxTitleLength(): number;
   getMaxTags(): number;

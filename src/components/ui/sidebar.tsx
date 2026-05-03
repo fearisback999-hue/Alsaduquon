@@ -18,6 +18,7 @@ import {
   Zap,
   Menu,
   X,
+  TrendingUp,
 } from "lucide-react";
 import { DualProgress } from "./progress";
 
@@ -38,6 +39,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard/auto-review", label: "Auto-Review", icon: <ShieldCheck {...ICON_PROPS} /> },
   { href: "/dashboard/listings", label: "Listings", icon: <ListChecks {...ICON_PROPS} /> },
   { href: "/dashboard/orders", label: "Orders", icon: <ShoppingBag {...ICON_PROPS} /> },
+  { href: "/dashboard/profitability", label: "Profitability", icon: <TrendingUp {...ICON_PROPS} /> },
   { href: "/dashboard/costs", label: "Costs", icon: <Wallet {...ICON_PROPS} /> },
   { href: "/dashboard/settings", label: "Settings", icon: <Settings {...ICON_PROPS} /> },
 ];

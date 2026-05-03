@@ -1,4 +1,4 @@
-import type { PlatformStrategy, PlatformListingResult, ListingInput, PlatformSEOHints } from "./types";
+import type { PlatformStrategy, PlatformListingResult, ListingInput, PlatformSEOHints, PlatformOrderData } from "./types";
 import { ExternalAPIError } from "@/lib/errors";
 import { withRetry } from "@/lib/retry";
 import { rateLimit } from "@/lib/external/rate-limiter";
@@ -113,6 +113,38 @@ export const shopifyStrategy: PlatformStrategy = {
         body: JSON.stringify({ variant: { id: variantId, price: String(price) } }),
       }),
     );
+  },
+
+  async fetchRecentOrders(sinceDaysAgo = 1): Promise<PlatformOrderData[]> {
+    const since = new Date(Date.now() - sinceDaysAgo * 24 * 60 * 60 * 1000).toISOString();
+    const data = (await withRetry(() =>
+      shopifyFetch(`/orders.json?created_at_min=${since}&status=any&limit=100`),
+    )) as { orders: Array<{
+      id: number;
+      financial_status: string;
+      line_items: Array<{ product_id: number; quantity: number; price: string }>;
+      created_at: string;
+      shipping_address?: { country?: string };
+    }> };
+
+    const result: PlatformOrderData[] = [];
+    for (const order of data.orders) {
+      for (const item of order.line_items) {
+        const status = order.financial_status === "paid" ? "processing" as const
+          : order.financial_status === "refunded" ? "refunded" as const
+          : "new" as const;
+        result.push({
+          externalOrderId: String(order.id),
+          externalListingId: String(item.product_id),
+          status,
+          quantity: item.quantity,
+          revenue: parseFloat(item.price) * item.quantity,
+          customerRegion: order.shipping_address?.country,
+          orderedAt: order.created_at,
+        });
+      }
+    }
+    return result;
   },
 
   getListingFee() {

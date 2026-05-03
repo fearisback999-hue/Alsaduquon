@@ -3,7 +3,8 @@ import { generatedImages, designConcepts, niches, printifyProducts, settings } f
 import { eq, inArray } from "drizzle-orm";
 import * as printify from "@/lib/external/printify";
 import { getProductConfig, getProductDisplayName, ALL_PRODUCT_TYPES } from "@/lib/printify/product-config";
-import { calculateDynamicPrice, getTypicalCost } from "@/lib/pricing/engine";
+import { calculateDynamicPrice, getTypicalCost, getTargetMargin } from "@/lib/pricing/engine";
+import { getProductTypePerformanceByNiche } from "@/lib/analytics/design-performance";
 import { log } from "@/lib/logger";
 
 async function getEnabledProductTypes(db: PipelineContext["db"]): Promise<string[]> {
@@ -14,8 +15,24 @@ async function getEnabledProductTypes(db: PipelineContext["db"]): Promise<string
       if (Array.isArray(parsed) && parsed.length > 0) return parsed;
     } catch { /* fall through to default */ }
   }
-  // Default: top 5 best sellers
   return ["unisex_tshirt", "hoodie", "mug_11oz", "poster", "tote_bag"];
+}
+
+async function rankProductTypesForNiche(nicheName: string, enabledTypes: string[]): Promise<string[]> {
+  const perfData = await getProductTypePerformanceByNiche();
+  const nichePerf = perfData.filter(
+    (p) => p.nicheName.toLowerCase() === nicheName.toLowerCase() && p.totalOrders > 0,
+  );
+
+  if (nichePerf.length === 0) return enabledTypes;
+
+  const perfMap = new Map(nichePerf.map((p) => [p.productType, p.totalOrders]));
+
+  return [...enabledTypes].sort((a, b) => {
+    const aScore = perfMap.get(a) ?? 0;
+    const bScore = perfMap.get(b) ?? 0;
+    return bScore - aScore;
+  });
 }
 
 export default async function execute(context: PipelineContext): Promise<StepResult> {
@@ -65,8 +82,11 @@ export default async function execute(context: PipelineContext): Promise<StepRes
       continue;
     }
 
-    // Create each enabled product type
-    for (const productType of enabledTypes) {
+    // Rank product types by historical performance in this niche
+    const rankedTypes = await rankProductTypesForNiche(niche?.name ?? "", enabledTypes);
+
+    // Create each enabled product type (best sellers first)
+    for (const productType of rankedTypes) {
       const config = getProductConfig(productType);
       if (!config) continue;
 
@@ -83,13 +103,14 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         // Get available variants for this blueprint
         const variantData = await printify.getVariants(config.blueprintId, config.printProviderId);
         const baseCost = getTypicalCost(productType);
+        const targetMargin = getTargetMargin(productType, niche?.competitionLevel);
         const pricing = calculateDynamicPrice({
           productType,
           baseCost,
           nicheCompositeScore: niche?.compositeScore ?? undefined,
           competitionLevel: niche?.competitionLevel ?? undefined,
           trendDirection: niche?.trendDirection ?? undefined,
-          marginPercent: 40,
+          marginPercent: targetMargin,
         });
 
         const variants = variantData.variants.slice(0, 20).map((v) => ({

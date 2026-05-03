@@ -1,4 +1,4 @@
-import { type PlatformStrategy, type PlatformListingResult, type ListingInput, type PlatformSEOHints, UnsupportedPlatformOperation } from "./types";
+import { type PlatformStrategy, type PlatformListingResult, type ListingInput, type PlatformSEOHints, type PlatformOrderData, UnsupportedPlatformOperation } from "./types";
 import { ExternalAPIError } from "@/lib/errors";
 import { withRetry } from "@/lib/retry";
 import { rateLimit } from "@/lib/external/rate-limiter";
@@ -92,10 +92,11 @@ export const redbubbleStrategy: PlatformStrategy = {
   },
 
   async updatePrice(_externalId: string, _price: number): Promise<void> {
-    // Redbubble pricing is set per product type via markup percentage on the
-    // artist account, not per individual artwork. Per-listing price updates
-    // are not supported by the public API.
     throw new UnsupportedPlatformOperation("redbubble", "updatePrice");
+  },
+
+  async fetchRecentOrders(_sinceDaysAgo?: number): Promise<PlatformOrderData[]> {
+    throw new UnsupportedPlatformOperation("redbubble", "fetchRecentOrders");
   },
 
   getListingFee() {

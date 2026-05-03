@@ -1,4 +1,4 @@
-import type { PlatformStrategy, PlatformListingResult, ListingInput, PlatformSEOHints } from "./types";
+import type { PlatformStrategy, PlatformListingResult, ListingInput, PlatformSEOHints, PlatformOrderData } from "./types";
 import { withRetry } from "@/lib/retry";
 import * as etsyClient from "@/lib/external/etsy";
 
@@ -46,6 +46,26 @@ export const etsyStrategy: PlatformStrategy = {
 
   async updateTitle(externalId: string, title: string): Promise<void> {
     await etsyClient.updateListing(Number(externalId), { title: title.slice(0, 140) });
+  },
+
+  async fetchRecentOrders(sinceDaysAgo = 1): Promise<PlatformOrderData[]> {
+    const minCreated = Math.floor((Date.now() - sinceDaysAgo * 24 * 60 * 60 * 1000) / 1000);
+    const receipts = await etsyClient.getShopReceipts({ minCreated, limit: 100 });
+    const result: PlatformOrderData[] = [];
+
+    for (const receipt of receipts.results) {
+      for (const tx of receipt.transactions) {
+        result.push({
+          externalOrderId: String(receipt.receipt_id),
+          externalListingId: String(tx.listing_id),
+          status: receipt.status === "paid" ? "processing" : "new",
+          quantity: tx.quantity,
+          revenue: tx.price.amount / tx.price.divisor,
+          orderedAt: new Date().toISOString(),
+        });
+      }
+    }
+    return result;
   },
 
   getListingFee() {

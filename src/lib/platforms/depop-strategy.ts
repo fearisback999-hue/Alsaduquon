@@ -1,4 +1,4 @@
-import { type PlatformStrategy, type PlatformListingResult, type ListingInput, type PlatformSEOHints, UnsupportedPlatformOperation } from "./types";
+import { type PlatformStrategy, type PlatformListingResult, type ListingInput, type PlatformSEOHints, type PlatformOrderData, UnsupportedPlatformOperation } from "./types";
 import { ExternalAPIError } from "@/lib/errors";
 import { withRetry } from "@/lib/retry";
 import { rateLimit } from "@/lib/external/rate-limiter";
@@ -89,6 +89,10 @@ export const depopStrategy: PlatformStrategy = {
         body: JSON.stringify({ price: { amount: String(price), currency: "USD" } }),
       }),
     );
+  },
+
+  async fetchRecentOrders(_sinceDaysAgo?: number): Promise<PlatformOrderData[]> {
+    throw new UnsupportedPlatformOperation("depop", "fetchRecentOrders");
   },
 
   getListingFee() {
