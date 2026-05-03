@@ -21,6 +21,7 @@ interface ClaudeCompletionOptions<T> {
   maxTokens?: number;
   temperature?: number;
   schema?: z.ZodType<T>;
+  cacheSystemPrompt?: boolean;
 }
 
 interface ClaudeCompletionResult<T> {
@@ -28,6 +29,8 @@ interface ClaudeCompletionResult<T> {
   parsed: T | null;
   inputTokens: number;
   outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
   model: string;
 }
 
@@ -38,11 +41,18 @@ export async function claudeCompletion<T = unknown>(
   const anthropic = getAnthropic();
   const model = options?.model ?? "claude-sonnet-4-6";
 
+  const useCache = options?.cacheSystemPrompt ?? true;
+  const systemParam = options?.systemPrompt
+    ? useCache
+      ? [{ type: "text" as const, text: options.systemPrompt, cache_control: { type: "ephemeral" as const } }]
+      : options.systemPrompt
+    : undefined;
+
   const response = await anthropic.messages.create({
     model,
     max_tokens: options?.maxTokens ?? 4000,
     temperature: options?.temperature ?? 0.7,
-    ...(options?.systemPrompt ? { system: options.systemPrompt } : {}),
+    ...(systemParam ? { system: systemParam } : {}),
     messages: [{ role: "user", content: prompt }],
   });
 
@@ -74,11 +84,18 @@ export async function claudeCompletion<T = unknown>(
     parsed = result.data;
   }
 
+  const usage = response.usage as typeof response.usage & {
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+  };
+
   return {
     content,
     parsed,
-    inputTokens: response.usage.input_tokens,
-    outputTokens: response.usage.output_tokens,
+    inputTokens: usage.input_tokens,
+    outputTokens: usage.output_tokens,
+    cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
+    cacheReadTokens: usage.cache_read_input_tokens ?? 0,
     model,
   };
 }
@@ -98,11 +115,18 @@ export async function claudeAnalyzeImage<T = unknown>(
   const anthropic = getAnthropic();
   const model = options?.model ?? "claude-sonnet-4-6";
 
+  const useCache = options?.cacheSystemPrompt ?? true;
+  const systemParam = options?.systemPrompt
+    ? useCache
+      ? [{ type: "text" as const, text: options.systemPrompt, cache_control: { type: "ephemeral" as const } }]
+      : options.systemPrompt
+    : undefined;
+
   const response = await anthropic.messages.create({
     model,
     max_tokens: options?.maxTokens ?? 500,
     temperature: options?.temperature ?? 0.3,
-    ...(options?.systemPrompt ? { system: options.systemPrompt } : {}),
+    ...(systemParam ? { system: systemParam } : {}),
     messages: [
       {
         role: "user",
@@ -129,11 +153,18 @@ export async function claudeAnalyzeImage<T = unknown>(
     } catch { /* ignore */ }
   }
 
+  const usage = response.usage as typeof response.usage & {
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+  };
+
   return {
     content,
     parsed,
-    inputTokens: response.usage.input_tokens,
-    outputTokens: response.usage.output_tokens,
+    inputTokens: usage.input_tokens,
+    outputTokens: usage.output_tokens,
+    cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
+    cacheReadTokens: usage.cache_read_input_tokens ?? 0,
     model,
   };
 }

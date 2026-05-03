@@ -13,6 +13,7 @@ import { runRepricing } from "@/lib/pricing/optimizer";
 import { rotateTitleVariants } from "@/lib/pricing/title-rotator";
 import { amplifyWinningNiches } from "@/lib/pipeline/winner-amplification";
 import { pruneDeadNiches, pruneSaturatedNiches } from "@/lib/pipeline/niche-pruning";
+import { expandWinningProducts } from "@/lib/pipeline/winner-product-expansion";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -45,6 +46,11 @@ export async function GET(request: NextRequest) {
     // means we're competing in too crowded a market. Frees budget for fresh niches.
     const saturationResult = await pruneSaturatedNiches();
     log("info", `Saturation: paused ${saturationResult.exhausted} saturated niches`);
+
+    // Phase 3c: Expand winning designs to additional product types.
+    // A bestselling t-shirt design becomes a hoodie, mug, sticker, etc.
+    const expansionResult = await expandWinningProducts();
+    log("info", `Product expansion: ${expansionResult.expanded} new products from winners (${expansionResult.failed} failed, ${expansionResult.skipped} skipped)`);
 
     // Phase 4: Rotate A/B title variants on listings that have been live on
     // their current variant for the rotation interval (14 days).
@@ -190,6 +196,7 @@ Return JSON:
       amplification: amplificationResult,
       pruning: { exhausted: pruningResult.exhausted },
       saturation: { paused: saturationResult.exhausted },
+      productExpansion: expansionResult,
       titleRotation,
     });
   } catch (error) {

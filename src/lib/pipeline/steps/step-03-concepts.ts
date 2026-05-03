@@ -8,10 +8,12 @@ import { trackTextUsage } from "@/lib/ai/token-tracker";
 import { fullModeration } from "@/lib/ai/moderation";
 import { enforcebudget } from "@/lib/cost/guard";
 import { formatSalesContextForConcepts } from "@/lib/pipeline/sales-feedback";
-import { formatSeasonalContext } from "@/lib/pipeline/seasonal-calendar";
+import { formatSeasonalContext, getActiveSeasons, matchNicheToSeason } from "@/lib/pipeline/seasonal-calendar";
 import { formatDesignPerformanceForConcepts, getNicheImageRejectionRate } from "@/lib/analytics/design-performance";
 import { log } from "@/lib/logger";
 import { sanitizeForPrompt } from "@/lib/ai/sanitize";
+
+const NICHE_BATCH_SIZE = 3;
 
 const SYSTEM_PROMPT = `You are a creative director for a successful Etsy print-on-demand brand. You understand that different products require different design approaches — a mug design should be different from a t-shirt design. You create commercially viable designs across diverse artistic styles. Your designs sell because they match current market trends and target specific buyer personas. Avoid copyrighted characters, trademarked phrases, and political content.`;
 
@@ -45,25 +47,39 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   const REJECTION_RATE_THRESHOLD = 0.7;
   const MIN_ATTEMPTS_FOR_SKIP = 6;
 
+  // Filter out niches with high image rejection rates up front
+  const viableNiches: typeof approvedNiches = [];
   for (const niche of approvedNiches) {
-    // Skip niches whose images keep failing the quality gate. They burn
-    // generation budget without producing anything publishable.
     const { rejectionRate, totalAttempts } = await getNicheImageRejectionRate(niche.id);
     if (totalAttempts >= MIN_ATTEMPTS_FOR_SKIP && rejectionRate >= REJECTION_RATE_THRESHOLD) {
       log("warn", `[Step 03] Skipping "${niche.name}" — ${(rejectionRate * 100).toFixed(0)}% image rejection rate over ${totalAttempts} recent attempts`);
       nichesSkippedForFailures++;
       continue;
     }
+    viableNiches.push(niche);
+  }
+
+  // Determine seasonal boost — generate more concepts during peak windows
+  const activeSeasons = getActiveSeasons();
+  const peakSeasonActive = activeSeasons.some((s) => s.scoreBoost >= 1.0);
+
+  async function processNiche(niche: typeof approvedNiches[0]): Promise<{ concepts: number; modRejects: number }> {
+    let nicheConceptCount = 0;
+    let nicheModRejects = 0;
 
     await enforcebudget(0.05);
     const safeNicheName = sanitizeForPrompt(niche.name);
 
-    // Get sales feedback and design performance for this niche
-    const salesContext = await formatSalesContextForConcepts(niche.name);
-    const seasonalContext = formatSeasonalContext();
-    const designPerfContext = await formatDesignPerformanceForConcepts(niche.name);
+    const seasonMatch = matchNicheToSeason(niche.name, activeSeasons);
+    const conceptCount = seasonMatch && seasonMatch.scoreBoost >= 1.0 ? 8 : peakSeasonActive ? 6 : 5;
 
-    const prompt = `Generate 5 print-on-demand design concepts for the niche: "${safeNicheName}"
+    const [salesContext, designPerfContext] = await Promise.all([
+      formatSalesContextForConcepts(niche.name),
+      formatDesignPerformanceForConcepts(niche.name),
+    ]);
+    const seasonalContext = formatSeasonalContext();
+
+    const prompt = `Generate ${conceptCount} print-on-demand design concepts for the niche: "${safeNicheName}"
 
 ${salesContext}
 ${designPerfContext}
@@ -75,6 +91,7 @@ DIVERSITY REQUIREMENTS (MANDATORY):
 - You MUST include at least 2 different style approaches (e.g., minimalist, retro/vintage, watercolor, bold/modern, hand-drawn, geometric, boho, kawaii, grunge, Art Deco)
 - You MUST target at least 2 different product categories with your style choices
 - DO NOT default to "vector art on transparent background" for every design. Choose the style that best fits each concept AND the target product type.
+${seasonMatch ? `\nSEASONAL BOOST: This niche aligns with "${seasonMatch.name}". Include ${Math.ceil(conceptCount / 3)} designs with seasonal/holiday themes that shoppers are actively searching for right now.` : ""}
 
 For each concept, provide:
 - title: Short catchy name (max 50 chars)
@@ -116,13 +133,13 @@ Return JSON:
         const result = useClaude
           ? await claudeCompletion(attemptPrompt, {
               systemPrompt: SYSTEM_PROMPT,
-              maxTokens: 3000,
+              maxTokens: 4000,
               temperature: 0.65,
               schema: DesignConceptsSchema,
             })
           : await chatCompletion(attemptPrompt, {
               systemPrompt: SYSTEM_PROMPT,
-              maxTokens: 3000,
+              maxTokens: 4000,
               temperature: 0.65,
               schema: DesignConceptsSchema,
               schemaName: "design_concepts",
@@ -149,13 +166,11 @@ Return JSON:
         }
       }
 
-      for (let i = 0; i < concepts.length && i < 5; i++) {
+      for (let i = 0; i < concepts.length && i < conceptCount; i++) {
         const concept = concepts[i];
 
-        // EARLY MODERATION — before spending money on image generation
         const modResult = await fullModeration(`${concept.title} ${concept.description} ${concept.style_prompt}`);
 
-        // Store enriched color palette with recommended products and style
         const enrichedPalette = JSON.stringify({
           colors: concept.color_palette,
           recommended_products: concept.recommended_products,
@@ -167,7 +182,7 @@ Return JSON:
           if (modResult.openaiResult.flagged) reasons.push(`openai: ${modResult.openaiResult.categories.join(", ")}`);
           if (!modResult.etsyResult.passed) reasons.push(`policy: ${modResult.etsyResult.violations.join("; ")}`);
           log("warn", `[Step 03] Concept rejected by moderation for "${niche.name}" / "${concept.title}": ${reasons.join(" | ")}`);
-          moderationRejects++;
+          nicheModRejects++;
           await context.db.insert(designConcepts).values({
             nicheId: niche.id,
             conceptNumber: i + 1,
@@ -193,11 +208,11 @@ Return JSON:
           targetAudience: concept.target_audience,
           designType: concept.design_type,
           colorPalette: enrichedPalette,
-          status: "moderated", // Passed moderation, ready for image gen
+          status: "moderated",
           moderationResult: JSON.stringify(modResult),
           pipelineRunId: context.pipelineRunId,
         });
-        totalConcepts++;
+        nicheConceptCount++;
       }
     } catch (error) {
       if (error instanceof StructuredOutputError) {
@@ -211,11 +226,30 @@ Return JSON:
         });
       }
     }
+
+    return { concepts: nicheConceptCount, modRejects: nicheModRejects };
+  }
+
+  // Process niches in parallel batches
+  for (let i = 0; i < viableNiches.length; i += NICHE_BATCH_SIZE) {
+    const batch = viableNiches.slice(i, i + NICHE_BATCH_SIZE);
+    const results = await Promise.allSettled(batch.map(processNiche));
+
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        totalConcepts += result.value.concepts;
+        moderationRejects += result.value.modRejects;
+      } else {
+        log("error", `[Step 03] Batch niche processing failed`, {
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        });
+      }
+    }
   }
 
   return {
     status: "completed",
-    message: `Generated ${totalConcepts} concepts across ${approvedNiches.length} niches (${moderationRejects} rejected by moderation, ${nichesSkippedForFailures} niches skipped for high image rejection rate)`,
-    data: { totalConcepts, moderationRejects, nichesProcessed: approvedNiches.length, nichesSkippedForFailures },
+    message: `Generated ${totalConcepts} concepts across ${viableNiches.length} niches (${moderationRejects} rejected by moderation, ${nichesSkippedForFailures} niches skipped for high image rejection rate)`,
+    data: { totalConcepts, moderationRejects, nichesProcessed: viableNiches.length, nichesSkippedForFailures },
   };
 }
