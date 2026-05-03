@@ -14,6 +14,7 @@ import { rotateTitleVariants } from "@/lib/pricing/title-rotator";
 import { amplifyWinningNiches } from "@/lib/pipeline/winner-amplification";
 import { pruneDeadNiches, pruneSaturatedNiches } from "@/lib/pipeline/niche-pruning";
 import { expandWinningProducts } from "@/lib/pipeline/winner-product-expansion";
+import { refreshDeactivatedListings } from "@/lib/pipeline/listing-refresh";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -52,7 +53,12 @@ export async function GET(request: NextRequest) {
     const expansionResult = await expandWinningProducts();
     log("info", `Product expansion: ${expansionResult.expanded} new products from winners (${expansionResult.failed} failed, ${expansionResult.skipped} skipped)`);
 
-    // Phase 4: Rotate A/B title variants on listings that have been live on
+    // Phase 4: Refresh deactivated zombie listings with new SEO copy and
+    // re-publish. Recycles dead inventory instead of losing it.
+    const refreshResult = await refreshDeactivatedListings();
+    log("info", `Listing refresh: ${refreshResult.refreshed} re-published, ${refreshResult.failed} failed, ${refreshResult.skipped} skipped`);
+
+    // Phase 5: Rotate A/B title variants on listings that have been live on
     // their current variant for the rotation interval (14 days).
     const titleRotation = await rotateTitleVariants();
     log("info", `Title rotation: rotated ${titleRotation.rotated}, finalized ${titleRotation.finalized} of ${titleRotation.evaluated} eligible`);
@@ -197,6 +203,7 @@ Return JSON:
       pruning: { exhausted: pruningResult.exhausted },
       saturation: { paused: saturationResult.exhausted },
       productExpansion: expansionResult,
+      listingRefresh: refreshResult,
       titleRotation,
     });
   } catch (error) {

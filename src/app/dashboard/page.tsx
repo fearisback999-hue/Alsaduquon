@@ -17,6 +17,7 @@ import {
   Settings as SettingsIcon,
   ArrowRight,
   Clock,
+  TrendingUp,
 } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -25,12 +26,16 @@ export default async function DashboardPage() {
   const today = new Date().toISOString().split("T")[0];
   const sevenDaysAgo = new Date(Date.now() - 7 * 86400_000).toISOString().split("T")[0];
 
-  const [liveListings, totalOrders, todayCost, latestRun, revenueResult, enabledProductsSetting, maxDailyCostSetting, costHistory] = await Promise.all([
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 86400_000).toISOString();
+
+  const [liveListings, totalOrders, todayCost, latestRun, revenueResult, profitResult, recentRevenue, enabledProductsSetting, maxDailyCostSetting, costHistory] = await Promise.all([
     db.select({ count: sql<number>`count(*)` }).from(listings).where(eq(listings.status, "published")).get(),
     db.select({ count: sql<number>`count(*)` }).from(orders).get(),
     db.select().from(dailyCosts).where(eq(dailyCosts.date, today)).get(),
     db.select().from(pipelineRuns).orderBy(desc(pipelineRuns.createdAt)).limit(1).get(),
     db.select({ sum: sql<number>`coalesce(sum(revenue), 0)` }).from(orders).get(),
+    db.select({ sum: sql<number>`coalesce(sum(profit), 0)` }).from(orders).get(),
+    db.select({ sum: sql<number>`coalesce(sum(revenue), 0)` }).from(orders).where(gte(orders.orderedAt, thirtyDaysAgo)).get(),
     db.select().from(settings).where(eq(settings.key, "enabled_product_types")).get(),
     db.select().from(settings).where(eq(settings.key, "max_daily_cost")).get(),
     db
@@ -76,43 +81,89 @@ export default async function DashboardPage() {
       </div>
 
       {/* Stat grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
-        <StatCard
-          label="Live Listings"
-          value={liveListings?.count ?? 0}
-          detail="Target: 500"
-          tone="brand"
-          icon={<Package className="h-4 w-4" strokeWidth={2} />}
-          sparkline={listingSpark}
-        />
-        <StatCard
-          label="Total Orders"
-          value={totalOrders?.count ?? 0}
-          tone="success"
-          icon={<ShoppingBag className="h-4 w-4" strokeWidth={2} />}
-        />
-        <StatCard
-          label="Total Revenue"
-          value={`$${(revenueResult?.sum ?? 0).toFixed(2)}`}
-          tone="success"
-          icon={<DollarSign className="h-4 w-4" strokeWidth={2} />}
-        />
-        <StatCard
-          label="Product Types"
-          value={enabledProductCount}
-          detail="of 16 enabled"
-          tone="info"
-          icon={<Boxes className="h-4 w-4" strokeWidth={2} />}
-        />
-        <StatCard
-          label="Today's Spend"
-          value={`$${(todayCost?.totalCost ?? 0).toFixed(2)}`}
-          detail={`$${displayedMaxBudget.toFixed(2)} budget`}
-          tone={costTone}
-          icon={<Wallet className="h-4 w-4" strokeWidth={2} />}
-          sparkline={costSpark}
-        />
-      </div>
+      {(() => {
+        const monthlyRevenue = recentRevenue?.sum ?? 0;
+        const projectedAnnual = monthlyRevenue * 12;
+        const revenueGoal = 150_000;
+        const goalPct = Math.min((projectedAnnual / revenueGoal) * 100, 100);
+        const totalProfit = profitResult?.sum ?? 0;
+        const totalRev = revenueResult?.sum ?? 0;
+        const margin = totalRev > 0 ? (totalProfit / totalRev) * 100 : 0;
+
+        return (
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
+              <StatCard
+                label="Live Listings"
+                value={liveListings?.count ?? 0}
+                detail="Target: 500"
+                tone="brand"
+                icon={<Package className="h-4 w-4" strokeWidth={2} />}
+                sparkline={listingSpark}
+              />
+              <StatCard
+                label="Total Orders"
+                value={totalOrders?.count ?? 0}
+                tone="success"
+                icon={<ShoppingBag className="h-4 w-4" strokeWidth={2} />}
+              />
+              <StatCard
+                label="Total Revenue"
+                value={`$${totalRev.toFixed(2)}`}
+                tone="success"
+                icon={<DollarSign className="h-4 w-4" strokeWidth={2} />}
+              />
+              <StatCard
+                label="Total Profit"
+                value={`$${totalProfit.toFixed(2)}`}
+                detail={`${margin.toFixed(1)}% margin`}
+                tone={totalProfit >= 0 ? "success" : "danger"}
+                icon={<TrendingUp className="h-4 w-4" strokeWidth={2} />}
+              />
+              <StatCard
+                label="Projected Annual"
+                value={`$${projectedAnnual >= 1000 ? `${(projectedAnnual / 1000).toFixed(1)}k` : projectedAnnual.toFixed(0)}`}
+                detail={`${goalPct.toFixed(0)}% of $150k goal`}
+                tone={goalPct >= 75 ? "success" : goalPct >= 25 ? "brand" : "info"}
+                icon={<Boxes className="h-4 w-4" strokeWidth={2} />}
+              />
+              <StatCard
+                label="Today's Spend"
+                value={`$${(todayCost?.totalCost ?? 0).toFixed(2)}`}
+                detail={`$${displayedMaxBudget.toFixed(2)} budget`}
+                tone={costTone}
+                icon={<Wallet className="h-4 w-4" strokeWidth={2} />}
+                sparkline={costSpark}
+              />
+            </div>
+
+            {/* Revenue goal progress */}
+            <div className="rounded-xl border border-border bg-surface p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium text-fg">Revenue Goal Progress</span>
+                <span className="text-xs tabular-nums text-fg-subtle">
+                  ${monthlyRevenue.toFixed(0)}/mo → ${projectedAnnual >= 1000 ? `$${(projectedAnnual / 1000).toFixed(1)}k` : `$${projectedAnnual.toFixed(0)}`}/yr
+                </span>
+              </div>
+              <div className="h-3 bg-surface-2 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-700 ${
+                    goalPct >= 75 ? "bg-success" : goalPct >= 25 ? "bg-brand" : "bg-info"
+                  }`}
+                  style={{ width: `${goalPct}%` }}
+                />
+              </div>
+              <div className="flex justify-between mt-1.5 text-[10px] text-fg-faint uppercase tracking-wider">
+                <span>$0</span>
+                <span>$50k</span>
+                <span>$100k</span>
+                <span>$150k</span>
+              </div>
+            </div>
+          </>
+        );
+      })()}
+
 
       {/* Two-column: latest run + quick actions */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
