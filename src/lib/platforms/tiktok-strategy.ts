@@ -1,4 +1,4 @@
-import type { PlatformStrategy, PlatformListingResult, ListingInput, PlatformSEOHints, PlatformOrderData } from "./types";
+import type { PlatformStrategy, PlatformListingResult, ListingInput, PlatformSEOHints, PlatformOrderData, PlatformMetricsData } from "./types";
 import { UnsupportedPlatformOperation } from "./types";
 import { ExternalAPIError } from "@/lib/errors";
 import { withRetry } from "@/lib/retry";
@@ -130,6 +130,10 @@ export const tiktokStrategy: PlatformStrategy = {
         }),
       }),
     );
+  },
+
+  async fetchListingMetrics(_externalIds: string[]): Promise<PlatformMetricsData[]> {
+    throw new UnsupportedPlatformOperation("tiktok", "fetchListingMetrics");
   },
 
   async fetchRecentOrders(_sinceDaysAgo?: number): Promise<PlatformOrderData[]> {

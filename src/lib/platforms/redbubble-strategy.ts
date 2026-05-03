@@ -1,4 +1,4 @@
-import { type PlatformStrategy, type PlatformListingResult, type ListingInput, type PlatformSEOHints, type PlatformOrderData, UnsupportedPlatformOperation } from "./types";
+import { type PlatformStrategy, type PlatformListingResult, type ListingInput, type PlatformSEOHints, type PlatformOrderData, type PlatformMetricsData, UnsupportedPlatformOperation } from "./types";
 import { ExternalAPIError } from "@/lib/errors";
 import { withRetry } from "@/lib/retry";
 import { rateLimit } from "@/lib/external/rate-limiter";
@@ -93,6 +93,10 @@ export const redbubbleStrategy: PlatformStrategy = {
 
   async updatePrice(_externalId: string, _price: number): Promise<void> {
     throw new UnsupportedPlatformOperation("redbubble", "updatePrice");
+  },
+
+  async fetchListingMetrics(_externalIds: string[]): Promise<PlatformMetricsData[]> {
+    throw new UnsupportedPlatformOperation("redbubble", "fetchListingMetrics");
   },
 
   async fetchRecentOrders(_sinceDaysAgo?: number): Promise<PlatformOrderData[]> {

@@ -1,4 +1,4 @@
-import type { PlatformStrategy, PlatformListingResult, ListingInput, PlatformSEOHints, PlatformOrderData } from "./types";
+import type { PlatformStrategy, PlatformListingResult, ListingInput, PlatformSEOHints, PlatformOrderData, PlatformMetricsData } from "./types";
 import { ExternalAPIError } from "@/lib/errors";
 import { withRetry } from "@/lib/retry";
 import { rateLimit } from "@/lib/external/rate-limiter";
@@ -113,6 +113,33 @@ export const shopifyStrategy: PlatformStrategy = {
         body: JSON.stringify({ variant: { id: variantId, price: String(price) } }),
       }),
     );
+  },
+
+  async fetchListingMetrics(externalIds: string[]): Promise<PlatformMetricsData[]> {
+    // Shopify basic plan doesn't expose a views/analytics API.
+    // Fetch product data and return views as 0; order-based metrics are
+    // computed separately from the orders table in the sync function.
+    const results: PlatformMetricsData[] = [];
+
+    // Fetch products in batches using the ids parameter
+    const batchSize = 50;
+    for (let i = 0; i < externalIds.length; i += batchSize) {
+      const batch = externalIds.slice(i, i + batchSize);
+      const idsParam = batch.join(",");
+      const data = (await withRetry(() =>
+        shopifyFetch(`/products.json?ids=${idsParam}&fields=id`),
+      )) as { products: Array<{ id: number }> };
+
+      for (const product of data.products) {
+        results.push({
+          externalListingId: String(product.id),
+          views: 0,
+          favorites: 0,
+        });
+      }
+    }
+
+    return results;
   },
 
   async fetchRecentOrders(sinceDaysAgo = 1): Promise<PlatformOrderData[]> {

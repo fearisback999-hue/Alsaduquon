@@ -1,4 +1,4 @@
-import type { PlatformStrategy, PlatformListingResult, ListingInput, PlatformSEOHints, PlatformOrderData } from "./types";
+import type { PlatformStrategy, PlatformListingResult, ListingInput, PlatformSEOHints, PlatformOrderData, PlatformMetricsData } from "./types";
 import { withRetry } from "@/lib/retry";
 import * as etsyClient from "@/lib/external/etsy";
 
@@ -46,6 +46,35 @@ export const etsyStrategy: PlatformStrategy = {
 
   async updateTitle(externalId: string, title: string): Promise<void> {
     await etsyClient.updateListing(Number(externalId), { title: title.slice(0, 140) });
+  },
+
+  async fetchListingMetrics(externalIds: string[]): Promise<PlatformMetricsData[]> {
+    const idSet = new Set(externalIds);
+    const results: PlatformMetricsData[] = [];
+    let offset = 0;
+    const limit = 100;
+    let hasMore = true;
+
+    while (hasMore) {
+      const response = await etsyClient.getShopListings("active", limit, offset);
+      const etsyResults = response.results ?? [];
+
+      for (const listing of etsyResults) {
+        const listingIdStr = String(listing.listing_id);
+        if (idSet.has(listingIdStr)) {
+          results.push({
+            externalListingId: listingIdStr,
+            views: listing.views ?? 0,
+            favorites: listing.num_favorers ?? 0,
+          });
+        }
+      }
+
+      offset += limit;
+      hasMore = etsyResults.length === limit;
+    }
+
+    return results;
   },
 
   async fetchRecentOrders(sinceDaysAgo = 1): Promise<PlatformOrderData[]> {

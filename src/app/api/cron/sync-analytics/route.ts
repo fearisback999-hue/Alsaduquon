@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { aggregateNicheAnalytics, aggregateDailyAnalytics } from "@/lib/analytics/aggregator";
 import { syncListingMetrics } from "@/lib/analytics/listing-metrics";
+import { syncCustomerReviews } from "@/lib/analytics/review-monitor";
 import { log } from "@/lib/logger";
 import { verifyCronSecret } from "@/lib/auth/cron-auth";
 
@@ -17,8 +18,10 @@ export async function GET(request: NextRequest) {
     await aggregateDailyAnalytics(today);
     await syncListingMetrics();
 
+    const reviewSync = await syncCustomerReviews();
+
     log("info", `Analytics sync completed for ${today}`);
-    return NextResponse.json({ success: true, date: today });
+    return NextResponse.json({ success: true, date: today, reviews: reviewSync });
   } catch (error) {
     log("error", "Analytics sync failed", { error: error instanceof Error ? error.message : String(error) });
     const message = process.env.NODE_ENV === "production"

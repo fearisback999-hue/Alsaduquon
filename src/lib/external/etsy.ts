@@ -199,6 +199,16 @@ export async function getShopReceipts(
   ) as Promise<{ count: number; results: Array<{ receipt_id: number; order_id: number; status: string; grandtotal: { amount: number; divisor: number }; transactions: Array<{ listing_id: number; quantity: number; price: { amount: number; divisor: number } }> }> }>;
 }
 
+export async function getShopReviews(
+  limit = 25,
+  offset = 0,
+): Promise<{ count: number; results: Array<{ review_id: number; listing_id: number; rating: number; review: string; created_timestamp: number }> }> {
+  const shopId = process.env.ETSY_SHOP_ID!;
+  return withRetry(() =>
+    etsyFetch(`/application/shops/${shopId}/reviews?limit=${limit}&offset=${offset}`),
+  ) as Promise<{ count: number; results: Array<{ review_id: number; listing_id: number; rating: number; review: string; created_timestamp: number }> }>;
+}
+
 export async function getShopListings(
   state?: "active" | "inactive" | "draft" | "expired",
   limit: number = 25,

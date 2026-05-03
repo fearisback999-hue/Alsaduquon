@@ -11,10 +11,13 @@ import { log } from "@/lib/logger";
 import { verifyCronSecret } from "@/lib/auth/cron-auth";
 import { runRepricing } from "@/lib/pricing/optimizer";
 import { rotateTitleVariants } from "@/lib/pricing/title-rotator";
+import { rotateDescriptionTagVariants } from "@/lib/pricing/description-tag-rotator";
 import { amplifyWinningNiches } from "@/lib/pipeline/winner-amplification";
 import { pruneDeadNiches, pruneSaturatedNiches } from "@/lib/pipeline/niche-pruning";
 import { expandWinningProducts } from "@/lib/pipeline/winner-product-expansion";
 import { refreshDeactivatedListings } from "@/lib/pipeline/listing-refresh";
+import { scrapeCompetitorPricing } from "@/lib/analytics/competitor-scraper";
+import { autoPausePipeline } from "@/lib/pipeline/payment-guard";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -25,6 +28,17 @@ export async function GET(request: NextRequest) {
   const denied = verifyCronSecret(request);
   if (denied) return denied;
   try {
+    // Pre-flight: check payment health and auto-pause if problems detected
+    const paymentCheck = await autoPausePipeline();
+    if (paymentCheck.paused) {
+      log("warn", `Optimize cron skipped: pipeline auto-paused due to payment issues — ${paymentCheck.reason}`);
+      return NextResponse.json({
+        success: false,
+        warning: "Pipeline auto-paused due to payment health issues",
+        reason: paymentCheck.reason,
+      });
+    }
+
     let optimized = 0;
     let deactivated = 0;
 
@@ -62,6 +76,16 @@ export async function GET(request: NextRequest) {
     // their current variant for the rotation interval (14 days).
     const titleRotation = await rotateTitleVariants();
     log("info", `Title rotation: rotated ${titleRotation.rotated}, finalized ${titleRotation.finalized} of ${titleRotation.evaluated} eligible`);
+
+    // Phase 6: Rotate A/B description and tag variants on listings that have
+    // been live on their current variant for the rotation interval (14 days).
+    const descriptionTagRotation = await rotateDescriptionTagVariants();
+    log("info", `Description/tag rotation: rotated ${descriptionTagRotation.rotated}, finalized ${descriptionTagRotation.finalized} of ${descriptionTagRotation.evaluated} eligible`);
+
+    // Phase 7: Scrape competitor pricing from Etsy for active niches.
+    // Tracks top-seller prices, favorites, and sales to inform our pricing strategy.
+    const competitorScrape = await scrapeCompetitorPricing();
+    log("info", `Competitor scrape: ${competitorScrape.nichesScraped} niches, ${competitorScrape.listingsScraped} listings, avg price $${competitorScrape.avgPrice}`);
 
     // Find underperforming listings:
     // Published 14+ days ago, has views but low conversion (<1%)
@@ -205,6 +229,8 @@ Return JSON:
       productExpansion: expansionResult,
       listingRefresh: refreshResult,
       titleRotation,
+      descriptionTagRotation,
+      competitorScrape,
     });
   } catch (error) {
     log("error", "Optimization cron failed", { error: error instanceof Error ? error.message : String(error) });

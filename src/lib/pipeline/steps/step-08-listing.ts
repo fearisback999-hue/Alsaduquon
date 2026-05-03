@@ -92,6 +92,22 @@ export default async function execute(context: PipelineContext): Promise<StepRes
       const description = await generatePlatformDescription(niche.name, concept.title, concept.description ?? "", productDisplayName, seoHints, context.pipelineRunId);
       const tags = await generatePlatformTags(niche.name, concept.title, productDisplayName, seoHints, context.pipelineRunId);
 
+      // Generate a second description variant with a different angle
+      const descriptionAlt = await generatePlatformDescription(
+        niche.name,
+        concept.title,
+        (concept.description ?? "") + "\n\nWrite a DIFFERENT version with an alternative angle — fresh structure, different emotional hook, alternate buyer persona.",
+        productDisplayName,
+        seoHints,
+        context.pipelineRunId,
+      );
+
+      // Generate a second tag set variant
+      const tagsAlt = await generatePlatformTags(niche.name, concept.title, productDisplayName, seoHints, context.pipelineRunId);
+
+      const descriptionVariants = JSON.stringify([description, descriptionAlt]);
+      const tagVariants = JSON.stringify([tags, tagsAlt]);
+
       const modResult = await fullModeration(`${title} ${description} ${tags.join(" ")}`);
       if (!modResult.passed) {
         const reasons: string[] = [];
@@ -138,7 +154,11 @@ export default async function execute(context: PipelineContext): Promise<StepRes
           titleVariants: titleVariants.length > 1 ? JSON.stringify(titleVariants) : null,
           titleVariantIndex: 0,
           description,
+          descriptionVariants,
+          descriptionVariantIndex: 0,
           tags: JSON.stringify(tags),
+          tagVariants,
+          tagVariantIndex: 0,
           seoScore,
           basePrice: primaryProduct.baseCost ?? 15,
           marginPercent: targetMargin,

@@ -38,6 +38,12 @@ export interface PlatformOrderData {
   orderedAt: string;
 }
 
+export interface PlatformMetricsData {
+  externalListingId: string;
+  views: number;
+  favorites: number;
+}
+
 export interface PlatformStrategy {
   id: PlatformId;
   name: string;
@@ -49,6 +55,7 @@ export interface PlatformStrategy {
   updatePrice(externalId: string, price: number): Promise<void>;
   updateTitle(externalId: string, title: string): Promise<void>;
   fetchRecentOrders(sinceDaysAgo?: number): Promise<PlatformOrderData[]>;
+  fetchListingMetrics(externalIds: string[]): Promise<PlatformMetricsData[]>;
   getListingFee(): number;
   getMaxTitleLength(): number;
   getMaxTags(): number;

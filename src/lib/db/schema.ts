@@ -207,6 +207,10 @@ export const listings = sqliteTable("listings", {
   titleVariants: text("title_variants"), // JSON array of variant titles for A/B rotation
   titleVariantIndex: integer("title_variant_index").default(0),
   titleVariantRotatedAt: text("title_variant_rotated_at"),
+  descriptionVariants: text("description_variants"), // JSON array of variant descriptions
+  descriptionVariantIndex: integer("description_variant_index").default(0),
+  tagVariants: text("tag_variants"), // JSON array of variant tag arrays (array of arrays)
+  tagVariantIndex: integer("tag_variant_index").default(0),
   description: text("description").notNull(),
   tags: text("tags").notNull(), // JSON array
   materials: text("materials"), // JSON array
@@ -400,6 +404,48 @@ export const listingMetrics = sqliteTable("listing_metrics", {
 }));
 
 // ============================================================
+// COMPETITOR PRICING
+// ============================================================
+
+export const competitorPricing = sqliteTable("competitor_pricing", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  nicheId: text("niche_id").notNull().references(() => niches.id, { onDelete: "cascade" }),
+  platform: text("platform", { enum: ["etsy", "shopify", "tiktok", "depop", "redbubble", "amazon"] }).notNull().default("etsy"),
+  externalListingId: text("external_listing_id"),
+  title: text("title"),
+  price: real("price").notNull(),
+  currency: text("currency").default("USD"),
+  favorites: integer("favorites").default(0),
+  sales: integer("sales").default(0),
+  sellerName: text("seller_name"),
+  scrapedAt: text("scraped_at").notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => ({
+  nicheIdx: index("competitor_niche_idx").on(table.nicheId),
+  scrapedIdx: index("competitor_scraped_idx").on(table.scrapedAt),
+}));
+
+// ============================================================
+// CUSTOMER REVIEWS
+// ============================================================
+
+export const customerReviews = sqliteTable("customer_reviews", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  listingId: text("listing_id").references(() => listings.id),
+  platform: text("platform").notNull().default("etsy"),
+  externalReviewId: text("external_review_id"),
+  rating: integer("rating").notNull(),
+  reviewText: text("review_text"),
+  sentiment: text("sentiment", { enum: ["positive", "neutral", "negative", "flagged"] }),
+  qualityIssue: integer("quality_issue", { mode: "boolean" }).default(false),
+  issueType: text("issue_type"), // "print_quality", "sizing", "color_mismatch", "shipping_damage"
+  syncedAt: text("synced_at").notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => ({
+  listingIdx: index("reviews_listing_idx").on(table.listingId),
+  ratingIdx: index("reviews_rating_idx").on(table.rating),
+  sentimentIdx: index("reviews_sentiment_idx").on(table.sentiment),
+}));
+
+// ============================================================
 // AUTH SESSIONS
 // ============================================================
 
@@ -453,8 +499,13 @@ export const pipelineStepLogsRelations = relations(pipelineStepLogs, ({ one }) =
 
 export const nichesRelations = relations(niches, ({ many, one }) => ({
   designConcepts: many(designConcepts),
+  competitorPricings: many(competitorPricing),
   pipelineRun: one(pipelineRuns, { fields: [niches.pipelineRunId], references: [pipelineRuns.id] }),
   analytics: one(nicheAnalytics, { fields: [niches.id], references: [nicheAnalytics.nicheId] }),
+}));
+
+export const competitorPricingRelations = relations(competitorPricing, ({ one }) => ({
+  niche: one(niches, { fields: [competitorPricing.nicheId], references: [niches.id] }),
 }));
 
 export const designConceptsRelations = relations(designConcepts, ({ one, many }) => ({
@@ -488,6 +539,11 @@ export const listingsRelations = relations(listings, ({ one, many }) => ({
   approvalEntry: one(approvalQueueEntries),
   orders: many(orders),
   metrics: one(listingMetrics),
+  reviews: many(customerReviews),
+}));
+
+export const customerReviewsRelations = relations(customerReviews, ({ one }) => ({
+  listing: one(listings, { fields: [customerReviews.listingId], references: [listings.id] }),
 }));
 
 export const listingMetricsRelations = relations(listingMetrics, ({ one }) => ({

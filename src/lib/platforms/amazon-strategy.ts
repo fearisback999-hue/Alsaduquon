@@ -1,4 +1,4 @@
-import type { PlatformStrategy, PlatformListingResult, ListingInput, PlatformSEOHints, PlatformOrderData } from "./types";
+import type { PlatformStrategy, PlatformListingResult, ListingInput, PlatformSEOHints, PlatformOrderData, PlatformMetricsData } from "./types";
 import { UnsupportedPlatformOperation } from "./types";
 import { ExternalAPIError } from "@/lib/errors";
 import { withRetry } from "@/lib/retry";
@@ -185,6 +185,10 @@ export const amazonStrategy: PlatformStrategy = {
         }),
       }),
     );
+  },
+
+  async fetchListingMetrics(_externalIds: string[]): Promise<PlatformMetricsData[]> {
+    throw new UnsupportedPlatformOperation("amazon", "fetchListingMetrics");
   },
 
   async fetchRecentOrders(_sinceDaysAgo?: number): Promise<PlatformOrderData[]> {
