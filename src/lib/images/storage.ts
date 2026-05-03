@@ -5,6 +5,9 @@ import { log } from "@/lib/logger";
 const ALLOWED_HOSTS = [
   "oaidalleapiprodscus.blob.core.windows.net", // DALL-E
   "images-api.printify.com", // Printify mockups
+  "placeit-assets.s3.amazonaws.com", // Placeit rendered mockups
+  "assets.placeit.net", // Placeit CDN
+  "api.placeit.net", // Placeit API direct
 ];
 
 const MAX_IMAGE_SIZE = 50 * 1024 * 1024; // 50MB
