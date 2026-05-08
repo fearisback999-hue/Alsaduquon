@@ -75,6 +75,19 @@ export const NicheExpansionSchema = z.object({
 });
 export type NicheExpansion = z.infer<typeof NicheExpansionSchema>;
 
+// step-01-research.ts — micro-niche drilling (buyer-persona x occasion x style)
+const MicroNicheItemSchema = z.object({
+  keyword: z.string(),
+  buyer_persona: z.string(),
+  occasion: z.string(),
+  style: z.string(),
+  confidence: z.number().min(0).max(1),
+});
+export const MicroNicheDrillSchema = z.object({
+  micro_niches: z.array(MicroNicheItemSchema).min(1).max(15),
+});
+export type MicroNicheDrill = z.infer<typeof MicroNicheDrillSchema>;
+
 // lib/etsy/seo.ts — generateListingTags
 // Wrapped in an envelope object: OpenAI strict mode requires an object root.
 export const ListingTagsSchema = z.object({

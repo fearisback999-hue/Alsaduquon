@@ -1,8 +1,9 @@
 import type { PipelineContext, StepResult } from "../context";
 import { niches } from "@/lib/db/schema";
-import { getAllTrends, getFlyingResearchVolume, expandNichesWithAI } from "@/lib/external/trend-apis";
+import { getAllTrends, getFlyingResearchVolume, expandNichesWithAI, type TrendResult } from "@/lib/external/trend-apis";
 import { batchValidateNiches } from "@/lib/external/etsy-search";
 import { enforcebudget } from "@/lib/cost/guard";
+import { drillMicroNiches, type MicroNiche } from "@/lib/research/micro-niche-drill";
 import { log } from "@/lib/logger";
 
 const POD_PRODUCT_WORDS = /\b(t-?shirts?|tees?|shirts?|hoodies?|mugs?|cups?|sweatshirts?|tank\s*tops?|posters?|stickers?|prints?|designs?)\b/g;
@@ -54,7 +55,42 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   const seedKeywords = trendResults.map((t) => t.keyword);
   const expanded = await expandNichesWithAI(seedKeywords, context.pipelineRunId);
 
-  const allCandidates = [...trendResults, ...expanded];
+  // Micro-niche drilling — for the top-volume seeds, decompose into
+  // ultra-specific buyer-persona x occasion x style tuples. Complements the
+  // shallower expandNichesWithAI by going deeper on a few high-signal seeds.
+  const topSeeds = [...trendResults]
+    .sort((a, b) => (b.searchVolume ?? 0) - (a.searchVolume ?? 0))
+    .slice(0, 5);
+
+  const microDrillResults: TrendResult[] = [];
+  // keyed by lowercased keyword -> persona metadata, used at insert time
+  const microNicheMeta = new Map<string, MicroNiche>();
+
+  for (const seed of topSeeds) {
+    const drilled = await drillMicroNiches(seed.keyword, 5, context.pipelineRunId);
+    for (const m of drilled) {
+      const key = m.keyword.toLowerCase().trim();
+      if (!microNicheMeta.has(key)) {
+        microNicheMeta.set(key, m);
+        microDrillResults.push({
+          keyword: m.keyword,
+          searchVolume: 0,
+          competition: 0.5,
+          trendDirection: "growing",
+          source: "micro_drill",
+        });
+      }
+    }
+  }
+
+  if (microDrillResults.length > 0) {
+    log(
+      "info",
+      `[Step 01] Micro-drill produced ${microDrillResults.length} buyer-persona micro-niches from top ${topSeeds.length} seeds`,
+    );
+  }
+
+  const allCandidates = [...trendResults, ...expanded, ...microDrillResults];
 
   // ---- ETSY MARKETPLACE VALIDATION ----
   // Validate ALL candidates (especially AI-expanded ones) against real Etsy data.
@@ -111,6 +147,8 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     existingExact.add(exactName);
     existingNormalized.add(normalizedName);
 
+    const microMeta = trend.source === "micro_drill" ? microNicheMeta.get(exactName) : undefined;
+
     const [inserted] = await context.db.insert(niches).values({
       name: exactName,
       source: trend.source,
@@ -118,6 +156,9 @@ export default async function execute(context: PipelineContext): Promise<StepRes
       searchVolume: realSearchVolume,
       competitionLevel: realCompetition,
       trendDirection: trend.trendDirection,
+      buyerPersona: microMeta?.buyerPersona,
+      occasion: microMeta?.occasion,
+      style: microMeta?.style,
       pipelineRunId: context.pipelineRunId,
     }).returning();
 
@@ -135,11 +176,12 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
   return {
     status: "completed",
-    message: `Discovered ${newNicheIds.length} new niches from ${trendResults.length} trends + ${expanded.length} AI expansions (${skippedDuplicates} duplicates, ${etsyFiltered} Etsy-filtered)`,
+    message: `Discovered ${newNicheIds.length} new niches from ${trendResults.length} trends + ${expanded.length} AI expansions + ${microDrillResults.length} micro-drilled (${skippedDuplicates} duplicates, ${etsyFiltered} Etsy-filtered)`,
     data: {
       nichesFound: newNicheIds.length,
       totalTrends: trendResults.length,
       aiExpanded: expanded.length,
+      microDrilled: microDrillResults.length,
       duplicatesSkipped: skippedDuplicates,
       etsyFiltered,
     },

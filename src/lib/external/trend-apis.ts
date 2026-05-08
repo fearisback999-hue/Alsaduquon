@@ -8,7 +8,7 @@ export interface TrendResult {
   searchVolume: number;
   competition: number; // 0-1
   trendDirection: string; // up, down, stable
-  source: "podcs" | "flying_research" | "etsy_trends" | "ai_expansion";
+  source: "podcs" | "flying_research" | "etsy_trends" | "ai_expansion" | "micro_drill";
 }
 
 // PodCS API

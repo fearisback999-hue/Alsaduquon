@@ -46,7 +46,7 @@ export const niches = sqliteTable("niches", {
   name: text("name").notNull(),
   category: text("category"),
   description: text("description"),
-  source: text("source", { enum: ["podcs", "flying_research", "etsy_trends", "ai_expansion", "manual"] }),
+  source: text("source", { enum: ["podcs", "flying_research", "etsy_trends", "ai_expansion", "micro_drill", "manual"] }),
   status: text("status", { enum: ["discovered", "scored", "approved", "rejected", "active", "exhausted", "saturated"] }).notNull().default("discovered"),
 
   // Raw trend data (step 1)
@@ -56,12 +56,27 @@ export const niches = sqliteTable("niches", {
   seasonalityScore: real("seasonality_score"),
   trendingScore: real("trending_score"),
   trendDirection: text("trend_direction"),
+  // Buyer-persona metadata (populated for source="micro_drill")
+  buyerPersona: text("buyer_persona"),
+  occasion: text("occasion"),
+  style: text("style"),
   rawTrendData: text("raw_trend_data"), // JSON
 
   // Scoring (step 2)
   compositeScore: real("composite_score"),
   scoreBreakdown: text("score_breakdown"), // JSON
   passedThreshold: integer("passed_threshold", { mode: "boolean" }).default(false),
+
+  // Demand velocity (computed from niche_velocity_snapshots)
+  velocityScore: real("velocity_score"), // computed score 0-10
+  weekOverWeekGrowth: real("week_over_week_growth"), // percentage change
+  accelerationDetected: integer("acceleration_detected", { mode: "boolean" }).default(false),
+  lastVelocityCheck: text("last_velocity_check"),
+
+  // Cross-platform demand triangulation (computed from multiple platforms)
+  triangulationScore: real("triangulation_score"), // 0-100
+  platformsPresent: integer("platforms_present"), // how many platforms show signal
+  crossPlatformData: text("cross_platform_data"), // JSON
 
   pipelineRunId: text("pipeline_run_id").references(() => pipelineRuns.id),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
@@ -70,6 +85,22 @@ export const niches = sqliteTable("niches", {
   statusIdx: index("niches_status_idx").on(table.status),
   scoreIdx: index("niches_score_idx").on(table.compositeScore),
   nameIdx: uniqueIndex("niches_name_idx").on(table.name),
+}));
+
+export const nicheVelocitySnapshots = sqliteTable("niche_velocity_snapshots", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  nicheId: text("niche_id").notNull().references(() => niches.id, { onDelete: "cascade" }),
+  searchVolume: integer("search_volume"),
+  etsyListingCount: integer("etsy_listing_count"),
+  etsyAvgFavorites: real("etsy_avg_favorites"),
+  etsyTopFavorites: integer("etsy_top_favorites"), // peak favorites of top listing
+  googleTrendsScore: integer("google_trends_score"), // 0-100
+  pinterestSaves: integer("pinterest_saves"),
+  snapshotDate: text("snapshot_date").notNull(), // YYYY-MM-DD
+  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => ({
+  nicheSnapshotIdx: index("niche_velocity_niche_idx").on(table.nicheId, table.snapshotDate),
+  dateIdx: index("niche_velocity_date_idx").on(table.snapshotDate),
 }));
 
 // ============================================================
@@ -485,6 +516,21 @@ export const settings = sqliteTable("settings", {
 }));
 
 // ============================================================
+// NICHE LEARNING WEIGHTS (closed-loop learning from sales outcomes)
+// ============================================================
+
+export const nicheLearningWeights = sqliteTable("niche_learning_weights", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  metric: text("metric").notNull(), // search_volume, competition, sales_velocity, seasonality, trending, velocity, triangulation
+  weight: real("weight").notNull(), // current weight applied
+  correlation: real("correlation"), // -1 to 1, correlation with order outcome
+  sampleSize: integer("sample_size").notNull(),
+  lastTrainedAt: text("last_trained_at").notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => ({
+  metricIdx: uniqueIndex("learning_weights_metric_idx").on(table.metric),
+}));
+
+// ============================================================
 // RELATIONS
 // ============================================================
 
@@ -500,8 +546,13 @@ export const pipelineStepLogsRelations = relations(pipelineStepLogs, ({ one }) =
 export const nichesRelations = relations(niches, ({ many, one }) => ({
   designConcepts: many(designConcepts),
   competitorPricings: many(competitorPricing),
+  velocitySnapshots: many(nicheVelocitySnapshots),
   pipelineRun: one(pipelineRuns, { fields: [niches.pipelineRunId], references: [pipelineRuns.id] }),
   analytics: one(nicheAnalytics, { fields: [niches.id], references: [nicheAnalytics.nicheId] }),
+}));
+
+export const nicheVelocitySnapshotsRelations = relations(nicheVelocitySnapshots, ({ one }) => ({
+  niche: one(niches, { fields: [nicheVelocitySnapshots.nicheId], references: [niches.id] }),
 }));
 
 export const competitorPricingRelations = relations(competitorPricing, ({ one }) => ({

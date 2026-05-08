@@ -5,10 +5,13 @@ import { chatCompletion, StructuredOutputError } from "@/lib/ai/client";
 import { NichePreResearchSchema, NicheScoringSchema, type NichePreResearch } from "@/lib/ai/schemas";
 import { trackTextUsage } from "@/lib/ai/token-tracker";
 import { enforcebudget } from "@/lib/cost/guard";
-import { SCORING_WEIGHTS, SCORE_THRESHOLD } from "@/lib/types";
+import { SCORE_THRESHOLD } from "@/lib/types";
 import { formatSalesContextForScoring } from "@/lib/pipeline/sales-feedback";
 import { getActiveSeasons, matchNicheToSeason } from "@/lib/pipeline/seasonal-calendar";
 import { formatNicheVelocityForScoring } from "@/lib/analytics/design-performance";
+import { getEffectiveWeights } from "@/lib/research/niche-learning";
+import { computeVelocityScore } from "@/lib/research/demand-velocity";
+import { getCrossPlatformSignals, computeTriangulationScore } from "@/lib/research/cross-platform-signals";
 import { log } from "@/lib/logger";
 import { sanitizeForPrompt } from "@/lib/ai/sanitize";
 
@@ -26,9 +29,11 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     return { status: "completed", message: "No niches to score" };
   }
 
-  // Load sales context and real-time velocity data once for all niches
+  // Load sales context, velocity data, and dynamic scoring weights
   const salesContext = await formatSalesContextForScoring();
   const velocityContext = await formatNicheVelocityForScoring();
+  const weights = await getEffectiveWeights();
+  log("info", `[Step 02] Using ${weights.source} scoring weights`);
 
   // Check if seasonal boost is enabled
   const seasonalSetting = await context.db.select().from(settings).where(eq(settings.key, "seasonal_boost_enabled")).get();
@@ -104,6 +109,30 @@ Return JSON:
       }
     }
 
+    // Compute demand velocity and cross-platform triangulation for this niche
+    let velocityScore = niche.velocityScore ?? 0;
+    let triangulationScore = niche.triangulationScore ?? 0;
+    let platformsPresent = niche.platformsPresent ?? 0;
+
+    try {
+      const velocity = await computeVelocityScore(niche.id);
+      velocityScore = velocity.score;
+    } catch { /* velocity is optional enrichment */ }
+
+    try {
+      const signals = await getCrossPlatformSignals(niche.name);
+      const tri = computeTriangulationScore(signals);
+      triangulationScore = tri.score;
+      platformsPresent = tri.platforms;
+
+      await context.db.update(niches).set({
+        triangulationScore: tri.score,
+        platformsPresent: tri.platforms,
+        crossPlatformData: JSON.stringify(signals),
+        updatedAt: new Date().toISOString(),
+      }).where(eq(niches.id, niche.id));
+    } catch { /* triangulation is optional enrichment */ }
+
     // Phase B: Scoring with enriched context
     const scoringPrompt = `Analyze this print-on-demand niche and rate each metric on a scale of 0-10.
 
@@ -113,6 +142,8 @@ HARD DATA:
 - Search volume: ${niche.searchVolume ?? "not available"} monthly searches
 - Competition level: ${niche.competitionLevel ?? "not available"} (0-1 scale, 1 = highest)
 - Trend direction from APIs: ${niche.trendDirection ?? "not available"}
+- Demand velocity score: ${velocityScore}/10 (week-over-week growth tracking)
+- Cross-platform triangulation: ${triangulationScore}/100 (present on ${platformsPresent} platforms)
 
 PRE-RESEARCH ANALYSIS:
 - Sales velocity assessment: ${research?.sales_velocity_assessment ?? "unknown"} — ${research?.sales_velocity_reasoning ?? "no data"}
@@ -126,11 +157,11 @@ ${salesContext}
 ${velocityContext}
 
 Rate these metrics (0-10 scale, 10 = best for a POD seller):
-1. search_volume_score: How high is demand? Use the search volume number if available. (weight: ${SCORING_WEIGHTS.searchVolume})
-2. competition_score: How LOW is competition? 10 = wide open market. Consider saturation assessment. (weight: ${SCORING_WEIGHTS.competition})
-3. sales_velocity_score: How fast will items sell? Use the velocity assessment and comparable niche data. (weight: ${SCORING_WEIGHTS.salesVelocity})
-4. seasonality_score: How evergreen is this? 10 = year-round demand, 3 = single-month spike. (weight: ${SCORING_WEIGHTS.seasonality})
-5. trending_score: Growth trajectory? 10 = explosive growth, 5 = stable, 2 = declining. (weight: ${SCORING_WEIGHTS.trending})
+1. search_volume_score: How high is demand? Use the search volume number if available. (weight: ${weights.searchVolume})
+2. competition_score: How LOW is competition? 10 = wide open market. Consider saturation assessment. (weight: ${weights.competition})
+3. sales_velocity_score: How fast will items sell? Use the velocity assessment and comparable niche data. (weight: ${weights.salesVelocity})
+4. seasonality_score: How evergreen is this? 10 = year-round demand, 3 = single-month spike. (weight: ${weights.seasonality})
+5. trending_score: Growth trajectory? 10 = explosive growth, 5 = stable, 2 = declining. (weight: ${weights.trending})
 
 CALIBRATION: A score of 7+ should be reserved for niches with strong evidence. Default to 5 when uncertain. Only score above 8 if hard data supports it.
 
@@ -163,11 +194,13 @@ Return JSON only:
 
       const scores = result.parsed!;
       let composite =
-        scores.search_volume_score * SCORING_WEIGHTS.searchVolume +
-        scores.competition_score * SCORING_WEIGHTS.competition +
-        scores.sales_velocity_score * SCORING_WEIGHTS.salesVelocity +
-        scores.seasonality_score * SCORING_WEIGHTS.seasonality +
-        scores.trending_score * SCORING_WEIGHTS.trending;
+        scores.search_volume_score * weights.searchVolume +
+        scores.competition_score * weights.competition +
+        scores.sales_velocity_score * weights.salesVelocity +
+        scores.seasonality_score * weights.seasonality +
+        scores.trending_score * weights.trending +
+        velocityScore * weights.velocity +
+        (triangulationScore / 10) * weights.triangulation;
 
       // Apply seasonal boost if niche matches an active season
       let seasonalMatch: string | null = null;
