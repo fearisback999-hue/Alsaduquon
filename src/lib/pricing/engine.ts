@@ -29,6 +29,12 @@ const PRODUCT_PRICING: Record<string, { minPrice: number; maxPrice: number; typi
   // Home
   blanket:             { minPrice: 50, maxPrice: 85, typicalCost: 30 },
   throw_pillow:        { minPrice: 28, maxPrice: 45, typicalCost: 15 },
+
+  // Cheap bait products — dirt-cheap base costs, used as entry-point listings
+  postcard:            { minPrice: 4, maxPrice: 9,   typicalCost: 1.5 },
+  greeting_card:       { minPrice: 5, maxPrice: 10,  typicalCost: 3 },
+  fridge_magnet:       { minPrice: 6, maxPrice: 12,  typicalCost: 3.5 },
+  baby_bodysuit:       { minPrice: 16, maxPrice: 26, typicalCost: 9 },
 };
 
 export interface PricingContext {

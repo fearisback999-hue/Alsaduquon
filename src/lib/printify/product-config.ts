@@ -192,6 +192,53 @@ export const PRODUCT_CONFIGS: Record<string, ProductConfig> = {
     defaultColors: [{ name: "White", hex: "#ffffff" }],
     defaultSizes: ["14x14", "16x16", "18x18"],
   },
+
+  // --- CHEAP "BAIT" PRODUCTS ---
+  // These are the dirt-cheap product types real Etsy POD shops use as
+  // entry-points to pull buyers into their shop. Listed at $5-8, they
+  // turn a niche keyword search into a click on YOUR shop instead of
+  // your competitor's. Once buyers are in the shop they upgrade to
+  // higher-margin items.
+  postcard: {
+    blueprintId: 273,        // Print Postcard (Printify Choice)
+    printProviderId: 99,
+    displayName: "Postcard",
+    category: "accessories",
+    printAreaWidth: 1875,
+    printAreaHeight: 1275,
+    defaultColors: [{ name: "White", hex: "#ffffff" }],
+    defaultSizes: ["4x6"],
+  },
+  greeting_card: {
+    blueprintId: 351,        // Folded Greeting Card
+    printProviderId: 99,
+    displayName: "Greeting Card",
+    category: "accessories",
+    printAreaWidth: 2625,
+    printAreaHeight: 1875,
+    defaultColors: [{ name: "White", hex: "#ffffff" }],
+    defaultSizes: ["5x7"],
+  },
+  fridge_magnet: {
+    blueprintId: 503,        // Square Magnet
+    printProviderId: 99,
+    displayName: "Fridge Magnet",
+    category: "accessories",
+    printAreaWidth: 1500,
+    printAreaHeight: 1500,
+    defaultColors: [{ name: "White", hex: "#ffffff" }],
+    defaultSizes: ['3x3', '4x4', '6x6'],
+  },
+  baby_bodysuit: {
+    blueprintId: 38,         // Rabbit Skins Infant Fine Jersey Bodysuit
+    printProviderId: 99,
+    displayName: "Baby Bodysuit",
+    category: "apparel",
+    printAreaWidth: 3300,
+    printAreaHeight: 3600,
+    defaultColors: [{ name: "White", hex: "#ffffff" }, { name: "Pink", hex: "#f8bbd0" }],
+    defaultSizes: ["NB", "6M", "12M", "18M", "24M"],
+  },
 };
 
 export const ALL_PRODUCT_TYPES = Object.keys(PRODUCT_CONFIGS);

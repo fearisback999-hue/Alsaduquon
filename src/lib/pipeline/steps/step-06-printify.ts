@@ -58,11 +58,22 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   const enabledTypes = allEnabledTypes.slice(0, maxProductsPerDesign);
 
   // Tease pricing: one unpopular variant priced low so the listing displays "from $X"
-  const [teaseEnabledSetting, teaseDiscountSetting, teaseFloorModeSetting, teaseAbsoluteFloorSetting] = await Promise.all([
+  const [
+    teaseEnabledSetting,
+    teaseDiscountSetting,
+    teaseFloorModeSetting,
+    teaseAbsoluteFloorSetting,
+    companionEnabledSetting,
+    companionTypeSetting,
+    companionPriceSetting,
+  ] = await Promise.all([
     context.db.select().from(settings).where(eq(settings.key, "tease_pricing_enabled")).get(),
     context.db.select().from(settings).where(eq(settings.key, "tease_pricing_discount_pct")).get(),
     context.db.select().from(settings).where(eq(settings.key, "tease_pricing_floor_mode")).get(),
     context.db.select().from(settings).where(eq(settings.key, "tease_pricing_absolute_floor")).get(),
+    context.db.select().from(settings).where(eq(settings.key, "tease_companion_enabled")).get(),
+    context.db.select().from(settings).where(eq(settings.key, "tease_companion_product_type")).get(),
+    context.db.select().from(settings).where(eq(settings.key, "tease_companion_retail_price")).get(),
   ]);
   const teaseEnabled = teaseEnabledSetting?.value === "true";
   const teaseDiscountPct = teaseDiscountSetting ? parseFloat(teaseDiscountSetting.value) || 70 : 70;
@@ -70,6 +81,17 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     ? teaseFloorModeSetting.value
     : "cost") as "safe" | "cost" | "absolute";
   const teaseAbsoluteFloor = teaseAbsoluteFloorSetting ? parseFloat(teaseAbsoluteFloorSetting.value) || 5.99 : 5.99;
+  const companionEnabled = companionEnabledSetting?.value === "true";
+  const companionType = companionTypeSetting?.value || "postcard";
+  const companionRetailPrice = companionPriceSetting ? parseFloat(companionPriceSetting.value) || 5.99 : 5.99;
+
+  // If companion is enabled and the cheap type isn't already in the user's
+  // enabled product types, slip it in as an extra (it doesn't count toward
+  // max_products_per_design — companions are bait, not the main inventory).
+  const typesToCreate = [...enabledTypes];
+  if (companionEnabled && !typesToCreate.includes(companionType) && getProductConfig(companionType)) {
+    typesToCreate.push(companionType);
+  }
 
   let created = 0;
   let failed = 0;
@@ -96,13 +118,19 @@ export default async function execute(context: PipelineContext): Promise<StepRes
       continue;
     }
 
-    // Rank product types by historical performance in this niche
-    const rankedTypes = await rankProductTypesForNiche(niche?.name ?? "", enabledTypes);
+    // Rank product types by historical performance in this niche.
+    // Companion (if enabled) is appended last — it's bait, not main inventory.
+    const rankedMain = await rankProductTypesForNiche(niche?.name ?? "", enabledTypes);
+    const rankedTypes = companionEnabled && !rankedMain.includes(companionType) && getProductConfig(companionType)
+      ? [...rankedMain, companionType]
+      : rankedMain;
 
     // Create each enabled product type (best sellers first)
     for (const productType of rankedTypes) {
       const config = getProductConfig(productType);
       if (!config) continue;
+
+      const isCompanion = companionEnabled && productType === companionType && !enabledTypes.includes(productType);
 
       // Idempotency: check if product already exists for this image + type
       const existing = await context.db
@@ -118,7 +146,20 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         const variantData = await printify.getVariants(config.blueprintId, config.printProviderId);
         const baseCost = getTypicalCost(productType);
         const targetMargin = getTargetMargin(productType, niche?.competitionLevel);
-        const pricing = calculateDynamicPrice({
+
+        // Companion products skip dynamic pricing — they're priced flat at
+        // the configured cheap retail price ($5.99 by default) to act as
+        // entry-point listings. Main products get full dynamic pricing.
+        const pricing = isCompanion
+          ? {
+              retailPrice: companionRetailPrice,
+              baseCost,
+              marginPercent: 0,
+              demandMultiplier: 1,
+              competitionAdjustment: 1,
+              productTypeRange: { min: companionRetailPrice, max: companionRetailPrice },
+            }
+          : calculateDynamicPrice({
           productType,
           baseCost,
           nicheCompositeScore: niche?.compositeScore ?? undefined,
@@ -132,8 +173,9 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         // Compute tease (hook) price + pick the best variant to discount.
         // selectHookVariantIndex returns null if the product has only one
         // variant (e.g. some posters), in which case tease is a no-op.
-        const hookIndex = teaseEnabled ? selectHookVariantIndex(variantsRaw) : null;
-        const tease = teaseEnabled && hookIndex != null
+        // Companions are already cheap — no need to discount them further.
+        const hookIndex = (teaseEnabled && !isCompanion) ? selectHookVariantIndex(variantsRaw) : null;
+        const tease = teaseEnabled && !isCompanion && hookIndex != null
           ? calculateTeasePrice(pricing.retailPrice, baseCost, teaseDiscountPct, {
               floorMode: teaseFloorMode,
               absoluteFloor: teaseAbsoluteFloor,
@@ -159,6 +201,10 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
         const displayName = getProductDisplayName(productType);
         const title = `${concept?.title ?? "Design"} ${displayName} | ${niche?.name ?? ""}`.trim();
+
+        if (isCompanion) {
+          log("info", `[Step 06] Companion bait: created ${displayName} for "${concept?.title ?? "design"}" at $${companionRetailPrice} (cost $${baseCost}, margin $${(companionRetailPrice - baseCost).toFixed(2)})`);
+        }
 
         const product = await printify.createProduct(shopId, {
           title,
