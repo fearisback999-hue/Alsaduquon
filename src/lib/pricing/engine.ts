@@ -120,6 +120,46 @@ export function getTypicalCost(productType: string): number {
   return PRODUCT_PRICING[productType]?.typicalCost ?? 15;
 }
 
+export interface TeasePricingResult {
+  hookPrice: number;
+  fullPrice: number;
+  discountPct: number;
+}
+
+/**
+ * "From $X" pricing — a single low-priced variant pulls eyeballs in
+ * search results while the rest of the variants are at full price.
+ *
+ * The hook price still floors at the product's base cost + minimum margin
+ * so we never sell at a loss. If the requested discount would push the
+ * hook below the cost floor, we pin to the floor and return a smaller
+ * effective discount.
+ */
+export function calculateTeasePrice(
+  fullPrice: number,
+  baseCost: number,
+  discountPct: number,
+  minMarginPct: number = 15,
+): TeasePricingResult {
+  const safeDiscount = Math.max(0, Math.min(70, discountPct));
+  const targetHook = fullPrice * (1 - safeDiscount / 100);
+
+  // Floor: cost + minimum margin so the loss leader still nets a tiny profit
+  const floor = baseCost / (1 - minMarginPct / 100);
+  const rawHook = Math.max(targetHook, floor);
+
+  const hookPrice = Math.max(0.99, Math.floor(rawHook) + 0.99);
+  const effectiveDiscount = fullPrice > 0
+    ? Math.round(((fullPrice - hookPrice) / fullPrice) * 1000) / 10
+    : 0;
+
+  return {
+    hookPrice: Math.round(hookPrice * 100) / 100,
+    fullPrice,
+    discountPct: effectiveDiscount,
+  };
+}
+
 // Premium products sustain higher margins (low price-elasticity, gift-friendly).
 const PREMIUM_PRODUCTS = new Set([
   "canvas_print", "blanket", "throw_pillow", "hoodie", "crewneck_sweatshirt",

@@ -19,6 +19,7 @@ import {
   Menu,
   X,
   TrendingUp,
+  Target,
 } from "lucide-react";
 import { DualProgress } from "./progress";
 
@@ -32,6 +33,7 @@ const ICON_PROPS = { size: 16, strokeWidth: 1.75 } as const;
 
 const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard", label: "Overview", icon: <LayoutDashboard {...ICON_PROPS} /> },
+  { href: "/dashboard/metrics", label: "Metrics & Goals", icon: <Target {...ICON_PROPS} /> },
   { href: "/dashboard/pipeline", label: "Pipeline", icon: <Workflow {...ICON_PROPS} /> },
   { href: "/dashboard/niches", label: "Niches", icon: <Hash {...ICON_PROPS} /> },
   { href: "/dashboard/designs", label: "Designs", icon: <Sparkles {...ICON_PROPS} /> },

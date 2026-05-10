@@ -14,12 +14,15 @@ const DEFAULT_SETTINGS = [
   { key: "training_wheels_enabled", value: "true", type: "boolean" as const, group: "pipeline" as const, description: "Block auto-approval until N manual reviews are completed (safety for new shops)" },
   { key: "training_wheels_min_reviews", value: "10", type: "number" as const, group: "pipeline" as const, description: "Manual approvals required before auto-approval activates" },
   { key: "annual_revenue_goal", value: "150000", type: "number" as const, group: "general" as const, description: "Annual revenue target in USD for goal tracking" },
+  { key: "target_car_price", value: "0", type: "number" as const, group: "general" as const, description: "Personal goal target (e.g. car price). Tracks total profit progress on the metrics tab. 0 = hidden." },
 
   // Pricing
   { key: "base_price", value: "25.00", type: "number" as const, group: "pricing" as const, description: "Minimum retail price in USD" },
   { key: "margin_percent", value: "40", type: "number" as const, group: "pricing" as const, description: "Target profit margin percentage" },
   { key: "max_title_length", value: "140", type: "number" as const, group: "pricing" as const, description: "Maximum Etsy listing title length" },
   { key: "max_tags", value: "13", type: "number" as const, group: "pricing" as const, description: "Maximum Etsy tags per listing" },
+  { key: "tease_pricing_enabled", value: "false", type: "boolean" as const, group: "pricing" as const, description: "Set one variant at a discount so listings show 'from $X' in search. Boosts CTR but may upset some buyers." },
+  { key: "tease_pricing_discount_pct", value: "35", type: "number" as const, group: "pricing" as const, description: "How much to discount the hook variant (0-70%). Floors at cost + minimum margin." },
 
   // Limits
   { key: "max_daily_cost", value: "30.00", type: "number" as const, group: "limits" as const, description: "Maximum daily spend in USD" },

@@ -3,7 +3,7 @@ import { generatedImages, designConcepts, niches, printifyProducts, settings } f
 import { eq, inArray } from "drizzle-orm";
 import * as printify from "@/lib/external/printify";
 import { getProductConfig, getProductDisplayName, ALL_PRODUCT_TYPES } from "@/lib/printify/product-config";
-import { calculateDynamicPrice, getTypicalCost, getTargetMargin } from "@/lib/pricing/engine";
+import { calculateDynamicPrice, calculateTeasePrice, getTypicalCost, getTargetMargin } from "@/lib/pricing/engine";
 import { getProductTypePerformanceByNiche } from "@/lib/analytics/design-performance";
 import { log } from "@/lib/logger";
 
@@ -56,6 +56,12 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   const maxProductsSetting = await context.db.select().from(settings).where(eq(settings.key, "max_products_per_design")).get();
   const maxProductsPerDesign = Math.max(1, parseInt(maxProductsSetting?.value ?? "3") || 3);
   const enabledTypes = allEnabledTypes.slice(0, maxProductsPerDesign);
+
+  // Tease pricing: one unpopular variant priced low so the listing displays "from $X"
+  const teaseEnabledSetting = await context.db.select().from(settings).where(eq(settings.key, "tease_pricing_enabled")).get();
+  const teaseDiscountSetting = await context.db.select().from(settings).where(eq(settings.key, "tease_pricing_discount_pct")).get();
+  const teaseEnabled = teaseEnabledSetting?.value === "true";
+  const teaseDiscountPct = teaseDiscountSetting ? parseFloat(teaseDiscountSetting.value) || 35 : 35;
 
   let created = 0;
   let failed = 0;
@@ -113,11 +119,27 @@ export default async function execute(context: PipelineContext): Promise<StepRes
           marginPercent: targetMargin,
         });
 
-        const variants = variantData.variants.slice(0, 20).map((v) => ({
+        // Compute tease (hook) price for the loss-leader variant if enabled
+        const tease = teaseEnabled
+          ? calculateTeasePrice(pricing.retailPrice, baseCost, teaseDiscountPct)
+          : null;
+
+        const fullPriceCents = Math.round(pricing.retailPrice * 100);
+        const hookPriceCents = tease ? Math.round(tease.hookPrice * 100) : fullPriceCents;
+
+        const variantsRaw = variantData.variants.slice(0, 20);
+        // Pick the last variant as the hook — usually the least common size/color
+        // pairing (e.g., 5XL in an off-color), so most buyers pay full price.
+        const hookIndex = variantsRaw.length - 1;
+        const variants = variantsRaw.map((v, i) => ({
           id: v.id,
-          price: Math.round(pricing.retailPrice * 100), // Price in cents
+          price: tease && i === hookIndex ? hookPriceCents : fullPriceCents,
           is_enabled: true,
         }));
+
+        if (tease) {
+          log("info", `[Step 06] Tease pricing on ${productType}: from $${tease.hookPrice} (1 variant) / $${pricing.retailPrice} (${variantsRaw.length - 1} variants)`);
+        }
 
         const displayName = getProductDisplayName(productType);
         const title = `${concept?.title ?? "Design"} ${displayName} | ${niche?.name ?? ""}`.trim();
