@@ -22,7 +22,9 @@ const DEFAULT_SETTINGS = [
   { key: "max_title_length", value: "140", type: "number" as const, group: "pricing" as const, description: "Maximum Etsy listing title length" },
   { key: "max_tags", value: "13", type: "number" as const, group: "pricing" as const, description: "Maximum Etsy tags per listing" },
   { key: "tease_pricing_enabled", value: "false", type: "boolean" as const, group: "pricing" as const, description: "Set one variant at a discount so listings show 'from $X' in search. Boosts CTR but may upset some buyers." },
-  { key: "tease_pricing_discount_pct", value: "35", type: "number" as const, group: "pricing" as const, description: "How much to discount the hook variant (0-70%). Floors at cost + minimum margin." },
+  { key: "tease_pricing_discount_pct", value: "70", type: "number" as const, group: "pricing" as const, description: "How much to discount the hook variant (0-95%). Higher = more eye-catching 'from' price. The hook variant is the largest size in the least popular color, so it's rarely actually purchased." },
+  { key: "tease_pricing_floor_mode", value: "cost", type: "string" as const, group: "pricing" as const, description: "Floor for the hook price: 'cost' = break even (recommended, since variant is rarely bought), 'safe' = cost + 15% margin (no loss possible), or 'absolute' = use tease_pricing_absolute_floor as a literal $ value (e.g. $5.99)." },
+  { key: "tease_pricing_absolute_floor", value: "5.99", type: "number" as const, group: "pricing" as const, description: "When floor_mode='absolute', the literal minimum price for the hook variant. Use $5-7 to hit the eye-catching 'from $X' look. WARNING: if this is below your product cost, every sale of this variant loses money." },
 
   // Limits
   { key: "max_daily_cost", value: "30.00", type: "number" as const, group: "limits" as const, description: "Maximum daily spend in USD" },

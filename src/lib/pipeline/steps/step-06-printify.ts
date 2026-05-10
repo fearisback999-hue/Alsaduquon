@@ -3,7 +3,7 @@ import { generatedImages, designConcepts, niches, printifyProducts, settings } f
 import { eq, inArray } from "drizzle-orm";
 import * as printify from "@/lib/external/printify";
 import { getProductConfig, getProductDisplayName, ALL_PRODUCT_TYPES } from "@/lib/printify/product-config";
-import { calculateDynamicPrice, calculateTeasePrice, getTypicalCost, getTargetMargin } from "@/lib/pricing/engine";
+import { calculateDynamicPrice, calculateTeasePrice, selectHookVariantIndex, getTypicalCost, getTargetMargin } from "@/lib/pricing/engine";
 import { getProductTypePerformanceByNiche } from "@/lib/analytics/design-performance";
 import { log } from "@/lib/logger";
 
@@ -58,10 +58,18 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   const enabledTypes = allEnabledTypes.slice(0, maxProductsPerDesign);
 
   // Tease pricing: one unpopular variant priced low so the listing displays "from $X"
-  const teaseEnabledSetting = await context.db.select().from(settings).where(eq(settings.key, "tease_pricing_enabled")).get();
-  const teaseDiscountSetting = await context.db.select().from(settings).where(eq(settings.key, "tease_pricing_discount_pct")).get();
+  const [teaseEnabledSetting, teaseDiscountSetting, teaseFloorModeSetting, teaseAbsoluteFloorSetting] = await Promise.all([
+    context.db.select().from(settings).where(eq(settings.key, "tease_pricing_enabled")).get(),
+    context.db.select().from(settings).where(eq(settings.key, "tease_pricing_discount_pct")).get(),
+    context.db.select().from(settings).where(eq(settings.key, "tease_pricing_floor_mode")).get(),
+    context.db.select().from(settings).where(eq(settings.key, "tease_pricing_absolute_floor")).get(),
+  ]);
   const teaseEnabled = teaseEnabledSetting?.value === "true";
-  const teaseDiscountPct = teaseDiscountSetting ? parseFloat(teaseDiscountSetting.value) || 35 : 35;
+  const teaseDiscountPct = teaseDiscountSetting ? parseFloat(teaseDiscountSetting.value) || 70 : 70;
+  const teaseFloorMode = (teaseFloorModeSetting?.value === "safe" || teaseFloorModeSetting?.value === "absolute"
+    ? teaseFloorModeSetting.value
+    : "cost") as "safe" | "cost" | "absolute";
+  const teaseAbsoluteFloor = teaseAbsoluteFloorSetting ? parseFloat(teaseAbsoluteFloorSetting.value) || 5.99 : 5.99;
 
   let created = 0;
   let failed = 0;
@@ -119,26 +127,34 @@ export default async function execute(context: PipelineContext): Promise<StepRes
           marginPercent: targetMargin,
         });
 
-        // Compute tease (hook) price for the loss-leader variant if enabled
-        const tease = teaseEnabled
-          ? calculateTeasePrice(pricing.retailPrice, baseCost, teaseDiscountPct)
+        const variantsRaw = variantData.variants.slice(0, 20);
+
+        // Compute tease (hook) price + pick the best variant to discount.
+        // selectHookVariantIndex returns null if the product has only one
+        // variant (e.g. some posters), in which case tease is a no-op.
+        const hookIndex = teaseEnabled ? selectHookVariantIndex(variantsRaw) : null;
+        const tease = teaseEnabled && hookIndex != null
+          ? calculateTeasePrice(pricing.retailPrice, baseCost, teaseDiscountPct, {
+              floorMode: teaseFloorMode,
+              absoluteFloor: teaseAbsoluteFloor,
+            })
           : null;
 
         const fullPriceCents = Math.round(pricing.retailPrice * 100);
         const hookPriceCents = tease ? Math.round(tease.hookPrice * 100) : fullPriceCents;
 
-        const variantsRaw = variantData.variants.slice(0, 20);
-        // Pick the last variant as the hook — usually the least common size/color
-        // pairing (e.g., 5XL in an off-color), so most buyers pay full price.
-        const hookIndex = variantsRaw.length - 1;
         const variants = variantsRaw.map((v, i) => ({
           id: v.id,
           price: tease && i === hookIndex ? hookPriceCents : fullPriceCents,
           is_enabled: true,
         }));
 
-        if (tease) {
-          log("info", `[Step 06] Tease pricing on ${productType}: from $${tease.hookPrice} (1 variant) / $${pricing.retailPrice} (${variantsRaw.length - 1} variants)`);
+        if (tease && hookIndex != null) {
+          const hookVariant = variantsRaw[hookIndex];
+          const lossNote = tease.belowCost
+            ? ` ⚠️ BELOW COST ($${baseCost}) — every sale of this variant loses $${(baseCost - tease.hookPrice).toFixed(2)}, but it's selected to be the least likely to be picked`
+            : "";
+          log("info", `[Step 06] Tease on ${productType}: hook "${hookVariant.title}" at $${tease.hookPrice} (${tease.discountPct}% off, floor=${teaseFloorMode}), full $${pricing.retailPrice} on ${variantsRaw.length - 1} other variants${lossNote}`);
         }
 
         const displayName = getProductDisplayName(productType);

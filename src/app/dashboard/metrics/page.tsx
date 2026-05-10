@@ -5,11 +5,12 @@ import {
   niches,
   pipelineRuns,
   dailyCosts,
+  costEntries,
   nicheLearningWeights,
   customerReviews,
   settings,
 } from "@/lib/db/schema";
-import { eq, sql, desc, gte, and } from "drizzle-orm";
+import { eq, sql, desc, gte } from "drizzle-orm";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { StatCard } from "@/components/ui/stat-card";
 import { forecastAnnualRevenue } from "@/lib/analytics/revenue-forecast";
@@ -22,7 +23,25 @@ import {
   Star,
   Package,
   DollarSign,
+  Wallet,
 } from "lucide-react";
+
+const COST_CATEGORY_LABELS: Record<string, string> = {
+  openai_text: "OpenAI (text)",
+  openai_image: "DALL-E (images)",
+  openai_moderation: "OpenAI moderation",
+  anthropic_text: "Claude (text)",
+  replicate_image: "Replicate (images)",
+  printify: "Printify",
+  etsy_fee: "Etsy fees",
+  shopify_fee: "Shopify fees",
+  tiktok_fee: "TikTok fees",
+  depop_fee: "Depop fees",
+  redbubble_fee: "Redbubble fees",
+  amazon_fee: "Amazon fees",
+  trend_api: "Trend APIs",
+  other: "Other",
+};
 
 export const dynamic = "force-dynamic";
 
@@ -90,6 +109,29 @@ export default async function MetricsPage() {
     db.select().from(settings).where(eq(settings.key, "target_car_price")).get(),
     forecastAnnualRevenue().catch(() => ({ projectedAnnual: 0, confidence: "low", method: "no_data", monthlyTrend: [] })),
   ]);
+
+  // API costs broken down by category
+  const todayDate = now.toISOString().split("T")[0];
+  const startOfMonthDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
+
+  const [costsByCategory30d, costsToday, costsThisMonth] = await Promise.all([
+    db
+      .select({
+        category: costEntries.category,
+        total: sql<number>`coalesce(sum(${costEntries.amount}), 0)`,
+      })
+      .from(costEntries)
+      .where(gte(costEntries.date, thirtyDaysAgoDate))
+      .groupBy(costEntries.category)
+      .orderBy(desc(sql`sum(${costEntries.amount})`))
+      .all(),
+    db.select({ sum: sql<number>`coalesce(sum(${costEntries.amount}), 0)` }).from(costEntries).where(eq(costEntries.date, todayDate)).get(),
+    db.select({ sum: sql<number>`coalesce(sum(${costEntries.amount}), 0)` }).from(costEntries).where(gte(costEntries.date, startOfMonthDate)).get(),
+  ]);
+
+  const costsTodayAmt = costsToday?.sum ?? 0;
+  const costsThisMonthAmt = costsThisMonth?.sum ?? 0;
+  const totalCost30d = costsByCategory30d.reduce((s, c) => s + (c.total ?? 0), 0);
 
   const totalRevenue = revenueAllTime?.sum ?? 0;
   const totalProfit = profitAllTime?.sum ?? 0;
@@ -317,6 +359,59 @@ export default async function MetricsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* API COSTS BLOCK */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-fg-subtle uppercase tracking-wider">API Costs &amp; Spend</h2>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <StatCard label="Today" value={`$${costsTodayAmt.toFixed(2)}`} tone="brand" icon={<Wallet className="h-4 w-4" />} />
+          <StatCard label="This month" value={`$${costsThisMonthAmt.toFixed(2)}`} tone="info" icon={<Wallet className="h-4 w-4" />} />
+          <StatCard label="Last 30d" value={`$${totalCost30d.toFixed(2)}`} tone="info" icon={<Wallet className="h-4 w-4" />} />
+          <StatCard
+            label="Cost / order (30d)"
+            value={`$${ordersCount > 0 ? (totalCost30d / ordersCount).toFixed(2) : "0.00"}`}
+            detail={ordersCount > 0 && monthRevTotal > 0 ? `${((totalCost30d / monthRevTotal) * 100).toFixed(1)}% of rev` : undefined}
+            tone="brand"
+            icon={<DollarSign className="h-4 w-4" />}
+          />
+        </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Cost breakdown — last 30 days</CardTitle>
+            <CardDescription>Where your money is going, by category</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {costsByCategory30d.length > 0 ? (
+              <div className="space-y-2">
+                {costsByCategory30d.map((c) => {
+                  const pct = totalCost30d > 0 ? (c.total / totalCost30d) * 100 : 0;
+                  const label = COST_CATEGORY_LABELS[c.category] ?? c.category;
+                  return (
+                    <div key={c.category} className="flex items-center gap-3 text-sm">
+                      <span className="text-fg w-40">{label}</span>
+                      <div className="flex-1 h-2 bg-surface-2 rounded-full overflow-hidden">
+                        <div className="h-full bg-brand rounded-full" style={{ width: `${Math.min(100, pct)}%` }} />
+                      </div>
+                      <span className="text-xs tabular-nums text-fg w-20 text-right">${(c.total ?? 0).toFixed(2)}</span>
+                      <span className="text-xs tabular-nums text-fg-subtle w-14 text-right">{pct.toFixed(1)}%</span>
+                    </div>
+                  );
+                })}
+                <div className="pt-2 mt-2 border-t border-border flex items-center text-sm">
+                  <span className="text-fg-subtle flex-1">Total</span>
+                  <span className="tabular-nums text-fg font-semibold">${totalCost30d.toFixed(2)}</span>
+                </div>
+              </div>
+            ) : (
+              <div className="text-sm text-fg-subtle">
+                No costs recorded yet. Run the pipeline to start tracking spend by category.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </section>
 
       {/* QUALITY BLOCK */}
       <section>
