@@ -195,34 +195,75 @@ export function calculateTeasePrice(
   };
 }
 
-// Size hierarchy: higher rank = larger / less popular
-const SIZE_RANK: Record<string, number> = {
-  XXS: 0, "2XS": 0,
-  XS: 1,
-  S: 2, SMALL: 2,
-  M: 3, MEDIUM: 3,
-  L: 4, LARGE: 4,
-  XL: 5,
-  XXL: 6, "2XL": 6,
-  XXXL: 7, "3XL": 7,
-  "4XL": 8, XXXXL: 8,
-  "5XL": 9, XXXXXL: 9,
-  "6XL": 10,
+// Hook-variant strategy: "plausible but unpopular."
+// We want a variant that looks like a real option — not 6XL Lime which
+// screams bait. Think cream Youth-Small: a legit listing that just
+// doesn't get picked often.
+//
+// Score = how good this size is as a hook. We AVOID the extremes (5XL+)
+// because they look suspicious. Sweet spot is XS/S or youth sizes — real
+// options that adults rarely buy.
+const SIZE_HOOK_SCORE: Record<string, number> = {
+  // Youth / baby sizes — perfect hooks, look legit
+  YXS: 10, "YOUTH XS": 10,
+  YS: 10, "YOUTH S": 10, "YOUTH SMALL": 10,
+  YM: 9, "YOUTH M": 9, "YOUTH MEDIUM": 9,
+  YL: 8, "YOUTH L": 8, "YOUTH LARGE": 8,
+  YXL: 8, "YOUTH XL": 8,
+
+  // Small adult sizes — plausible, low demand
+  XXS: 7, "2XS": 7,
+  XS: 6,
+  S: 5, SMALL: 5,
+
+  // Core sizes — never pick these, they're bestsellers
+  M: 0, MEDIUM: 0,
+  L: 0, LARGE: 0,
+  XL: 1,
+
+  // Big sizes — moderately unpopular but less suspicious than extremes
+  "2XL": 3, XXL: 3,
+  "3XL": 4, XXXL: 4,
+
+  // Giant sizes — too obvious as bait, score them lower than small/youth
+  "4XL": 2, XXXXL: 2,
+  "5XL": 2, XXXXXL: 2,
+  "6XL": 1,
 };
 
-// Higher number = LESS popular (so we want it as the hook)
-// Common bestsellers: black, white, heather grey, navy
-const COLOR_UNPOPULARITY: Record<string, number> = {
-  BLACK: 1, WHITE: 1,
-  "HEATHER GREY": 2, "HEATHER GRAY": 2, GREY: 2, GRAY: 2, CHARCOAL: 2,
-  NAVY: 3, "NAVY BLUE": 3,
-  RED: 4, "DARK HEATHER": 4,
-  BLUE: 5, "ROYAL BLUE": 5, "ATHLETIC HEATHER": 5,
-  GREEN: 6, "FOREST GREEN": 6, OLIVE: 6,
-  PURPLE: 7, MAROON: 7, BURGUNDY: 7,
-  ORANGE: 8, YELLOW: 8, BROWN: 8,
-  PINK: 9, "HOT PINK": 9, FUCHSIA: 9,
-  LIME: 10, NEON: 10, TEAL: 10, MINT: 10, CORAL: 10, MUSTARD: 10,
+// Hook color strategy: neutral/muted tones that look normal but don't sell.
+// We AVOID neon/lime/coral — those scream "trick variant." Instead we
+// prefer sand, cream, natural, ash — colors that exist on every catalog
+// page but nobody actually clicks "add to cart" on.
+const COLOR_HOOK_SCORE: Record<string, number> = {
+  // Muted neutrals — the sweet spot: look totally normal, rarely bought
+  SAND: 10, NATURAL: 10, CREAM: 10, TAN: 10, OATMEAL: 10,
+  "HEATHER DUST": 9, "SOFT CREAM": 9, IVORY: 9, PEBBLE: 9,
+  ASH: 8, "HEATHER PRISM": 8, "ICE GREY": 8, "ICE GRAY": 8,
+  "SILVER": 7, STONE: 7, SLATE: 7,
+
+  // Subtle pastels — believable but low-demand
+  "LIGHT BLUE": 6, "BABY BLUE": 6, PEACH: 6,
+  LAVENDER: 6, MAUVE: 6, DUSTY: 6,
+  "HEATHER MAUVE": 6, "HEATHER ORCHID": 6,
+
+  // Standard colors — moderate demand, avoid as hooks
+  BROWN: 5, OLIVE: 5, "DARK HEATHER": 5,
+  GREEN: 4, "FOREST GREEN": 4,
+  PURPLE: 4, MAROON: 4, BURGUNDY: 4,
+  ORANGE: 4, YELLOW: 4,
+  RED: 3,
+  BLUE: 3, "ROYAL BLUE": 3,
+  NAVY: 2, "NAVY BLUE": 2,
+  CHARCOAL: 2, GREY: 2, GRAY: 2,
+  "HEATHER GREY": 1, "HEATHER GRAY": 1,
+
+  // Top sellers — never pick these
+  BLACK: 0, WHITE: 0,
+
+  // Flashy colors — draws too much attention as bait, avoid
+  LIME: 2, NEON: 2, "HOT PINK": 2, FUCHSIA: 2, CORAL: 2,
+  PINK: 3, TEAL: 3, MINT: 3, MUSTARD: 3,
 };
 
 interface ParsedVariantTitle {
@@ -232,7 +273,7 @@ interface ParsedVariantTitle {
 
 function parseVariantTitle(title: string): ParsedVariantTitle {
   // Common formats: "Black / 5XL", "Heather Royal / XL", "5XL / Lime",
-  //                 "11oz / White", "5XL", "Lime"
+  //                 "11oz / White", "Youth S / Sand", "5XL", "Lime"
   const parts = title.split("/").map((s) => s.trim());
 
   let size: string | null = null;
@@ -240,40 +281,36 @@ function parseVariantTitle(title: string): ParsedVariantTitle {
 
   for (const part of parts) {
     const upper = part.toUpperCase();
-    if (size == null && SIZE_RANK[upper] != null) {
+    if (size == null && SIZE_HOOK_SCORE[upper] != null) {
       size = upper;
       continue;
     }
-    if (color == null && SIZE_RANK[upper] == null) {
+    if (color == null && SIZE_HOOK_SCORE[upper] == null) {
       color = upper;
     }
   }
   return { size, color };
 }
 
-function colorUnpopularity(color: string | null): number {
+function colorHookScore(color: string | null): number {
   if (!color) return 5;
-  // Exact match first
-  if (COLOR_UNPOPULARITY[color] != null) return COLOR_UNPOPULARITY[color];
-  // Partial: any keyword present
-  for (const [key, score] of Object.entries(COLOR_UNPOPULARITY)) {
+  if (COLOR_HOOK_SCORE[color] != null) return COLOR_HOOK_SCORE[color];
+  for (const [key, score] of Object.entries(COLOR_HOOK_SCORE)) {
     if (color.includes(key)) return score;
   }
-  // Unknown color = probably uncommon, score it high
-  return 8;
+  // Unknown color — probably a weird catalog name like "Heather Prism Peach",
+  // which is exactly the kind of low-demand variant we want
+  return 7;
 }
 
 /**
- * Picks the variant least likely to be a customer's first choice — the
- * "hook" variant for from-pricing. Strategy:
+ * Picks a "plausible but unpopular" variant as the hook for from-pricing.
  *
- *   1. Prefer the largest size (5XL > 4XL > ... > S)
- *   2. Among the largest sizes, prefer the least popular color
- *      (lime/neon/coral over black/white)
- *   3. If no sizes parseable, just pick the most uncommon color
- *   4. If only one variant exists, return null — tease pricing is a no-op
- *
- * Returns the index of the chosen variant, or null if tease isn't viable.
+ * Strategy: look like a real option nobody actually buys.
+ *   - Prefer youth/XS/S sizes over giant 5XL+ (which look like bait)
+ *   - Prefer muted neutrals (sand, cream, ash) over flashy colors
+ *   - Never pick M/L/XL + Black/White (those are bestsellers)
+ *   - If only one variant exists, return null (tease is a no-op)
  */
 export function selectHookVariantIndex(
   variants: Array<{ id: number; title: string }>,
@@ -286,12 +323,12 @@ export function selectHookVariantIndex(
   for (let i = 0; i < variants.length; i++) {
     const { size, color } = parseVariantTitle(variants[i].title);
 
-    let score = 0;
-    if (size && SIZE_RANK[size] != null) {
-      // Size is the dominant factor — multiply by 100 so it outweighs color
-      score += SIZE_RANK[size] * 100;
-    }
-    score += colorUnpopularity(color);
+    const sizeScore = size && SIZE_HOOK_SCORE[size] != null ? SIZE_HOOK_SCORE[size] : 3;
+    const clrScore = colorHookScore(color);
+
+    // Both factors matter roughly equally — a cream M is as good as a
+    // black Youth-S. Weight size slightly more since it's more predictive.
+    const score = sizeScore * 12 + clrScore * 10;
 
     if (score > bestScore) {
       bestScore = score;
