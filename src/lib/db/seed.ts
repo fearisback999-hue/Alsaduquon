@@ -1,7 +1,12 @@
+import { config } from "dotenv";
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { settings } from "./schema";
 import { eq } from "drizzle-orm";
+
+// Load .env.local (then .env) so `npm run db:seed` works without dotenv-cli.
+config({ path: ".env.local" });
+config({ path: ".env" });
 
 const DEFAULT_SETTINGS = [
   // Pipeline
