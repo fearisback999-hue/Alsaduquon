@@ -83,7 +83,19 @@ const FIELD_SPECS: Record<string, FieldSpec> = {
       { value: "standard", label: "Standard" },
     ],
   },
-  gpt_model: { control: "text" },
+  gpt_model: {
+    control: "select",
+    options: [
+      { value: "gpt-4o", label: "GPT-4o (recommended)" },
+      { value: "gpt-4o-mini", label: "GPT-4o Mini (cheaper)" },
+      { value: "gpt-4-turbo", label: "GPT-4 Turbo" },
+      { value: "gpt-4", label: "GPT-4" },
+      { value: "gpt-4.1", label: "GPT-4.1" },
+      { value: "gpt-4.1-mini", label: "GPT-4.1 Mini" },
+      { value: "gpt-4.1-nano", label: "GPT-4.1 Nano" },
+      { value: "o3-mini", label: "o3-mini" },
+    ],
+  },
   seasonal_boost_enabled: {
     control: "select",
     options: [
@@ -230,10 +242,70 @@ export default function SettingsPage() {
 
   if (loading) {
     return (
-      <div className="space-y-6">
-        <Skeleton className="h-8 w-40" />
-        <Skeleton className="h-48 w-full" />
-        <Skeleton className="h-64 w-full" />
+      <div className="space-y-6 max-w-5xl animate-fade-in">
+        <div className="page-header">
+          <Skeleton className="h-7 w-32" />
+          <Skeleton className="h-4 w-64 mt-2" />
+        </div>
+        {/* Product Types skeleton */}
+        <div className="card p-5 space-y-4">
+          <div className="flex items-center gap-3">
+            <Skeleton className="h-9 w-9 rounded-lg" />
+            <div className="space-y-1.5">
+              <Skeleton className="h-5 w-28" />
+              <Skeleton className="h-3.5 w-44" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <Skeleton key={i} className="h-10 rounded-lg" />
+            ))}
+          </div>
+        </div>
+        {/* Throughput & Budget skeleton */}
+        <div className="card p-5 space-y-4">
+          <div className="flex items-center gap-3">
+            <Skeleton className="h-9 w-9 rounded-lg" />
+            <div className="space-y-1.5">
+              <Skeleton className="h-5 w-40" />
+              <Skeleton className="h-3.5 w-56" />
+            </div>
+          </div>
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="flex items-center justify-between py-3 border-t border-border">
+              <div className="space-y-1.5">
+                <Skeleton className="h-4 w-32" />
+                <Skeleton className="h-3 w-48" />
+              </div>
+              <div className="flex items-center gap-2">
+                <Skeleton className="h-9 w-24 rounded-lg" />
+                <Skeleton className="h-8 w-14 rounded-lg" />
+              </div>
+            </div>
+          ))}
+        </div>
+        {/* Other settings skeleton */}
+        <div className="card p-5 space-y-4">
+          <div className="flex items-center gap-3">
+            <Skeleton className="h-9 w-9 rounded-lg" />
+            <div className="space-y-1.5">
+              <Skeleton className="h-5 w-24" />
+              <Skeleton className="h-3.5 w-20" />
+            </div>
+          </div>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="flex items-center justify-between py-3 border-t border-border">
+              <div className="space-y-1.5">
+                <Skeleton className="h-4 w-40" />
+                <Skeleton className="h-3 w-64" />
+              </div>
+              <div className="flex items-center gap-2">
+                <Skeleton className="h-9 w-48 rounded-lg" />
+                <Skeleton className="h-8 w-14 rounded-lg" />
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }

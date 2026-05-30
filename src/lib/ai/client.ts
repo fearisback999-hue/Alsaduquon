@@ -54,7 +54,10 @@ export async function chatCompletion<T = unknown>(
   options?: ChatCompletionOptions<T>,
 ): Promise<ChatCompletionResult<T>> {
   const openai = getOpenAI();
-  const model = options?.model ?? "gpt-4.1";
+  // gpt-4o is GA on every paid OpenAI account and supports structured
+  // outputs. (gpt-4.1 is also valid but not available on every tier, which
+  // can make calls silently fail — see research-step "0 expansions" bug.)
+  const model = options?.model ?? "gpt-4o";
 
   const messages: OpenAI.ChatCompletionMessageParam[] = [];
   if (options?.systemPrompt) {

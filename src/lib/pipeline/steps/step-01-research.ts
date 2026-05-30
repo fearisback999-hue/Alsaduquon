@@ -135,23 +135,34 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
     // Etsy viability gate — reject niches with no real marketplace demand.
     // Skipped entirely when Etsy isn't connected (see note above).
+    //
+    // CRITICAL: only filter when `dataAvailable` is true. A failed Etsy API
+    // call (bad/expired credentials, rate limit, outage) returns viability 0,
+    // which would otherwise filter out EVERY niche and produce an empty
+    // pipeline. When the call failed we let the niche through and rely on
+    // Step 2's AI scoring instead of fail-closing the whole run.
     const etsyData = etsyValidation.get(trend.keyword);
-    if (etsyConfigured && etsyData && etsyData.viabilityScore < MIN_ETSY_VIABILITY_SCORE) {
+    if (etsyConfigured && etsyData && !etsyData.dataAvailable) {
+      log("warn", `[Step 01] Etsy lookup unavailable for "${trend.keyword}" — letting it through (will be AI-scored in Step 2)`);
+    }
+    if (etsyConfigured && etsyData && etsyData.dataAvailable && etsyData.viabilityScore < MIN_ETSY_VIABILITY_SCORE) {
       etsyFiltered++;
       log("info", `[Step 01] Etsy-filtered "${trend.keyword}" — viability ${etsyData.viabilityScore}/100 (${etsyData.activeListingCount} listings, avg ${etsyData.avgFavorites} favorites, ${etsyData.demandSignal} demand, ${etsyData.competitionLevel} competition)`);
       continue;
     }
 
-    // Enrich with Etsy data if available
-    const realCompetition = etsyData
-      ? etsyData.activeListingCount >= 50000 ? 0.95
-        : etsyData.activeListingCount >= 10000 ? 0.75
-        : etsyData.activeListingCount >= 1000 ? 0.45
+    // Enrich with Etsy data only when we actually got a real response —
+    // otherwise fall back to the trend's own competition/volume estimates.
+    const hasEtsyData = !!etsyData && etsyData.dataAvailable;
+    const realCompetition = hasEtsyData
+      ? etsyData!.activeListingCount >= 50000 ? 0.95
+        : etsyData!.activeListingCount >= 10000 ? 0.75
+        : etsyData!.activeListingCount >= 1000 ? 0.45
         : 0.2
       : trend.competition;
 
-    const realSearchVolume = etsyData && etsyData.avgFavorites > 0
-      ? Math.max(trend.searchVolume, etsyData.avgFavorites * 10)
+    const realSearchVolume = hasEtsyData && etsyData!.avgFavorites > 0
+      ? Math.max(trend.searchVolume, etsyData!.avgFavorites * 10)
       : trend.searchVolume;
 
     existingExact.add(exactName);

@@ -18,11 +18,27 @@ export default function LoginPage() {
   const [success, setSuccess] = useState(false);
   const [reverseCanvas, setReverseCanvas] = useState(false);
   const [forwardCanvas, setForwardCanvas] = useState(true);
+  const [splineOk, setSplineOk] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
   useEffect(() => {
     setTimeout(() => inputRef.current?.focus(), 800);
+  }, []);
+
+  // Spline's runtime fires async fetch errors (from web workers / wasm) that
+  // bypass React error boundaries. Suppress these on this page so the login
+  // form stays functional even when the 3D scene can't load.
+  useEffect(() => {
+    function suppress(e: PromiseRejectionEvent) {
+      const msg = e.reason?.message ?? String(e.reason ?? "");
+      if (msg.includes("Failed to fetch") || msg.includes("spline")) {
+        e.preventDefault();
+        setSplineOk(false);
+      }
+    }
+    window.addEventListener("unhandledrejection", suppress);
+    return () => window.removeEventListener("unhandledrejection", suppress);
   }, []);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -304,10 +320,17 @@ export default function LoginPage() {
               transition={{ duration: 1, delay: 0.3, ease: "easeOut" }}
               className="w-full h-[600px] relative"
             >
-              <SplineScene
-                scene="https://prod.spline.design/kZDDjO5HuC9GJUM2/scene.splinecode"
-                className="w-full h-full"
-              />
+              {splineOk ? (
+                <SplineScene
+                  scene="https://prod.spline.design/kZDDjO5HuC9GJUM2/scene.splinecode"
+                  className="w-full h-full"
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center relative overflow-hidden">
+                  <div className="absolute w-72 h-72 rounded-full bg-gradient-to-br from-indigo-500/30 via-purple-500/20 to-transparent blur-3xl animate-float" />
+                  <div className="absolute w-48 h-48 rounded-full bg-gradient-to-tr from-purple-600/20 to-indigo-400/10 blur-2xl animate-float" style={{ animationDelay: "1.2s" }} />
+                </div>
+              )}
               {/* Gradient overlay so 3D blends with the dark edges */}
               <div className="absolute inset-0 pointer-events-none bg-gradient-to-l from-transparent via-transparent to-black/60" />
               <div className="absolute inset-0 pointer-events-none bg-gradient-to-r from-transparent via-transparent to-black/30" />

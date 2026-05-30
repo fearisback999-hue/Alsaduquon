@@ -31,7 +31,7 @@ export const SETTING_VALIDATORS: Record<string, z.ZodType<unknown>> = {
   // API
   dalle_model: z.enum(["dall-e-3", "dall-e-2"]),
   dalle_quality: z.enum(["hd", "standard"]),
-  gpt_model: z.string().min(3).max(50),
+  gpt_model: z.enum(["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "o3-mini"]),
 
   // Pipeline toggles
   seasonal_boost_enabled: z.enum(["true", "false"]),
@@ -56,8 +56,18 @@ export const SETTING_VALIDATORS: Record<string, z.ZodType<unknown>> = {
     } catch { return false; }
   }, "Must be a JSON array of valid platform names"),
 
+  // Tease pricing
+  tease_pricing_enabled: z.enum(["true", "false"]),
+  tease_pricing_discount_pct: z.coerce.number().min(0).max(95),
+  tease_pricing_floor_mode: z.enum(["cost", "safe", "absolute"]),
+  tease_pricing_absolute_floor: z.coerce.number().min(0).max(100),
+  tease_companion_enabled: z.enum(["true", "false"]),
+  tease_companion_product_type: z.enum(["postcard", "sticker", "greeting_card", "fridge_magnet", "baby_bodysuit"]),
+  tease_companion_retail_price: z.coerce.number().min(1).max(100),
+
   // General
   annual_revenue_goal: z.coerce.number().min(1000).max(100_000_000),
+  target_car_price: z.coerce.number().min(0).max(10_000_000),
 };
 
 export interface SettingValidationResult {

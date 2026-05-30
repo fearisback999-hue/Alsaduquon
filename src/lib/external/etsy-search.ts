@@ -13,6 +13,13 @@ interface EtsySearchResult {
   demandSignal: "strong" | "moderate" | "weak" | "none";
   competitionLevel: "saturated" | "competitive" | "moderate" | "low";
   viabilityScore: number; // 0-100
+  /**
+   * True only when we got a real response from Etsy. False when the API key
+   * is missing or the request failed. Callers MUST NOT treat a low/zero
+   * viabilityScore as "no demand" unless this is true — otherwise an API
+   * outage would silently kill every niche (fail-closed bug).
+   */
+  dataAvailable: boolean;
 }
 
 interface EtsyListingHit {
@@ -62,7 +69,9 @@ export async function validateNicheOnEtsy(keyword: string): Promise<EtsySearchRe
     const results = ((data as { results?: EtsyListingHit[] }).results ?? []) as EtsyListingHit[];
 
     if (results.length === 0) {
-      return { ...defaultResult(keyword), activeListingCount: count, demandSignal: "none", competitionLevel: "low", viabilityScore: 15 };
+      // Real response, just no listings for this keyword — that's a genuine
+      // low-demand signal, so the gate may legitimately filter it.
+      return { ...defaultResult(keyword), activeListingCount: count, demandSignal: "none", competitionLevel: "low", viabilityScore: 15, dataAvailable: true };
     }
 
     const prices = results.map((r) => r.price.amount / r.price.divisor);
@@ -84,6 +93,7 @@ export async function validateNicheOnEtsy(keyword: string): Promise<EtsySearchRe
       demandSignal,
       competitionLevel,
       viabilityScore,
+      dataAvailable: true,
     };
   } catch (error) {
     log("warn", `[Etsy Search] Validation failed for "${keyword}"`, {
@@ -177,5 +187,8 @@ function defaultResult(keyword: string): EtsySearchResult {
     demandSignal: "none",
     competitionLevel: "low",
     viabilityScore: 0,
+    // No real data — missing API key or a failed request. The viability gate
+    // must NOT filter on this, or an outage kills the whole pipeline.
+    dataAvailable: false,
   };
 }

@@ -43,7 +43,7 @@ const DEFAULT_SETTINGS = [
   // API
   { key: "dalle_model", value: "dall-e-3", type: "string" as const, group: "api" as const, description: "DALL-E model to use for image generation" },
   { key: "dalle_quality", value: "hd", type: "string" as const, group: "api" as const, description: "DALL-E image quality: hd or standard" },
-  { key: "gpt_model", value: "gpt-4.1", type: "string" as const, group: "api" as const, description: "GPT model for text generation" },
+  { key: "gpt_model", value: "gpt-4o", type: "string" as const, group: "api" as const, description: "GPT model for text generation" },
 
   // Seasonal
   { key: "seasonal_boost_enabled", value: "true", type: "boolean" as const, group: "pipeline" as const, description: "Boost seasonal niches during holiday prep windows" },
