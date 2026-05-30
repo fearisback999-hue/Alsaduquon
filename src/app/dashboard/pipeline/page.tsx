@@ -5,6 +5,7 @@ import {
   Play,
   Pause,
   PlayCircle,
+  RotateCcw,
   CheckCircle2,
   XCircle,
   Clock,
@@ -105,6 +106,7 @@ export default function PipelinePage() {
   const [data, setData] = useState<PipelineStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [triggering, setTriggering] = useState(false);
+  const [resuming, setResuming] = useState(false);
   const [autopilotEnabled, setAutopilotEnabled] = useState<boolean | null>(null);
   const [togglingAutopilot, setTogglingAutopilot] = useState(false);
   const [runsLimit, setRunsLimit] = useState(RUNS_PAGE_SIZE);
@@ -148,6 +150,28 @@ export default function PipelinePage() {
       toast.error("Network error triggering pipeline");
     } finally {
       setTriggering(false);
+      loadData();
+    }
+  }
+
+  async function resumePipeline() {
+    if (resuming) return;
+    setResuming(true);
+    try {
+      const res = await fetch("/api/pipeline/resume", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const result = await res.json();
+      if (!res.ok) {
+        toast.error(result.error ?? "Resume failed");
+      } else {
+        toast.success(`Pipeline resumed from step ${result.completedSteps ?? 0}`);
+      }
+    } catch {
+      toast.error("Network error resuming pipeline");
+    } finally {
+      setResuming(false);
       loadData();
     }
   }
@@ -231,14 +255,25 @@ export default function PipelinePage() {
           >
             {autopilotEnabled ? "Pause autopilot" : "Resume autopilot"}
           </Button>
+          {run?.status === "paused" && (
+            <Button
+              variant="primary"
+              onClick={resumePipeline}
+              disabled={resuming}
+              loading={resuming}
+              leftIcon={resuming ? undefined : <RotateCcw className="h-4 w-4" />}
+            >
+              {resuming ? "Resuming…" : "Resume run"}
+            </Button>
+          )}
           <Button
-            variant="primary"
+            variant={run?.status === "paused" ? "secondary" : "primary"}
             onClick={triggerPipeline}
             disabled={triggering}
             loading={triggering}
             leftIcon={triggering ? undefined : <PlayCircle className="h-4 w-4" />}
           >
-            {triggering ? "Running…" : "Trigger run"}
+            {triggering ? "Running…" : "New run"}
           </Button>
         </div>
       </div>
@@ -288,6 +323,25 @@ export default function PipelinePage() {
               <div className="mt-3 flex items-start gap-2 px-3 py-2.5 bg-danger-subtle text-danger rounded-lg text-sm">
                 <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" strokeWidth={2.25} />
                 <span>{run.error}</span>
+              </div>
+            )}
+            {run.status === "paused" && (
+              <div className="mt-4 flex items-center gap-3 px-4 py-3 bg-warning-subtle rounded-xl border border-warning/20">
+                <Pause className="h-5 w-5 text-warning flex-shrink-0" />
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-fg">Pipeline paused at step {run.currentStep}</p>
+                  <p className="text-xs text-fg-subtle mt-0.5">Review is needed before continuing. Resume to pick up where it left off.</p>
+                </div>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={resumePipeline}
+                  disabled={resuming}
+                  loading={resuming}
+                  leftIcon={resuming ? undefined : <RotateCcw className="h-3.5 w-3.5" />}
+                >
+                  {resuming ? "Resuming…" : "Resume"}
+                </Button>
               </div>
             )}
           </CardContent>
