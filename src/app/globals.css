@@ -40,17 +40,19 @@
   }
 
   :root.dark {
-    --bg: 9 9 11;
-    --surface: 24 24 27;
-    --surface-2: 39 39 42;
-    --surface-hover: 39 39 42;
-    --border: 39 39 42;
-    --border-strong: 63 63 70;
+    /* Premium indigo-tinted dark — matches the login hero. Near-black with a
+       subtle cool cast, elevated surfaces, indigo brand identity. */
+    --bg: 8 8 12;
+    --surface: 18 18 24;
+    --surface-2: 26 26 34;
+    --surface-hover: 33 33 43;
+    --border: 38 38 48;
+    --border-strong: 56 56 70;
 
-    --fg: 244 244 245;
-    --fg-muted: 212 212 216;
-    --fg-subtle: 161 161 170;
-    --fg-faint: 113 113 122;
+    --fg: 245 245 250;
+    --fg-muted: 205 205 218;
+    --fg-subtle: 150 150 168;
+    --fg-faint: 100 100 120;
 
     --brand: 129 140 248;
     --brand-hover: 165 180 252;
@@ -66,10 +68,10 @@
     --info: 56 189 248;
     --info-subtle: 12 74 110;
 
-    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.4);
-    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.5), 0 2px 4px -2px rgb(0 0 0 / 0.3);
-    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.6), 0 4px 6px -4px rgb(0 0 0 / 0.4);
-    --shadow-glow: 0 0 0 1px rgb(129 140 248 / 0.2), 0 8px 24px -8px rgb(129 140 248 / 0.5);
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.5);
+    --shadow-md: 0 4px 12px -2px rgb(0 0 0 / 0.6), 0 2px 4px -2px rgb(0 0 0 / 0.4);
+    --shadow-lg: 0 16px 40px -8px rgb(0 0 0 / 0.7), 0 4px 8px -4px rgb(0 0 0 / 0.5);
+    --shadow-glow: 0 0 0 1px rgb(129 140 248 / 0.25), 0 8px 32px -8px rgb(99 102 241 / 0.45);
   }
 
   html {
@@ -135,21 +137,43 @@
 
 @layer components {
   .card {
-    background-color: rgb(var(--surface));
+    background-image: linear-gradient(
+      160deg,
+      rgb(var(--surface-2) / 0.6) 0%,
+      rgb(var(--surface)) 60%
+    );
     border: 1px solid rgb(var(--border));
     border-radius: 14px;
     box-shadow: var(--shadow-sm);
+    position: relative;
+  }
+  /* Subtle top-edge highlight for depth (premium glass look) */
+  .card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(
+      180deg,
+      rgb(255 255 255 / 0.06),
+      transparent 40%
+    );
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
   }
 
   .card-hover {
-    transition: box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1),
-                border-color 200ms cubic-bezier(0.4, 0, 0.2, 1),
-                transform 200ms cubic-bezier(0.4, 0, 0.2, 1);
+    transition: box-shadow 220ms cubic-bezier(0.4, 0, 0.2, 1),
+                border-color 220ms cubic-bezier(0.4, 0, 0.2, 1),
+                transform 220ms cubic-bezier(0.4, 0, 0.2, 1);
   }
   .card-hover:hover {
-    box-shadow: var(--shadow-md);
-    border-color: rgb(var(--border-strong));
-    transform: translateY(-1px);
+    box-shadow: var(--shadow-lg), var(--shadow-glow);
+    border-color: rgb(var(--brand) / 0.35);
+    transform: translateY(-2px);
   }
 
   .glass {
