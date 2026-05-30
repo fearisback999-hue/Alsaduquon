@@ -98,6 +98,15 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   const candidateKeywords = allCandidates.map((c) => c.keyword);
   const etsyValidation = await batchValidateNiches(candidateKeywords);
 
+  // Only enforce the Etsy viability gate when Etsy is actually connected.
+  // Without credentials every keyword scores 0, which would wrongly kill the
+  // entire pipeline. When Etsy isn't configured we let niches through and
+  // rely on Step 2's AI scoring instead.
+  const etsyConfigured = !!process.env.ETSY_CLIENT_ID;
+  if (!etsyConfigured) {
+    log("warn", "[Step 01] Etsy not connected — skipping marketplace viability gate (niches will be scored by AI in Step 2)");
+  }
+
   let etsyFiltered = 0;
 
   // Load existing niche names for dedup (exact + fuzzy)
@@ -124,9 +133,10 @@ export default async function execute(context: PipelineContext): Promise<StepRes
       continue;
     }
 
-    // Etsy viability gate — reject niches with no real marketplace demand
+    // Etsy viability gate — reject niches with no real marketplace demand.
+    // Skipped entirely when Etsy isn't connected (see note above).
     const etsyData = etsyValidation.get(trend.keyword);
-    if (etsyData && etsyData.viabilityScore < MIN_ETSY_VIABILITY_SCORE) {
+    if (etsyConfigured && etsyData && etsyData.viabilityScore < MIN_ETSY_VIABILITY_SCORE) {
       etsyFiltered++;
       log("info", `[Step 01] Etsy-filtered "${trend.keyword}" — viability ${etsyData.viabilityScore}/100 (${etsyData.activeListingCount} listings, avg ${etsyData.avgFavorites} favorites, ${etsyData.demandSignal} demand, ${etsyData.competitionLevel} competition)`);
       continue;

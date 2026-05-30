@@ -8,7 +8,39 @@ export interface TrendResult {
   searchVolume: number;
   competition: number; // 0-1
   trendDirection: string; // up, down, stable
-  source: "podcs" | "flying_research" | "etsy_trends" | "ai_expansion" | "micro_drill";
+  source: "podcs" | "flying_research" | "etsy_trends" | "ai_expansion" | "micro_drill" | "seed_fallback";
+}
+
+// Evergreen POD seed categories. Used when no paid trend API (PodCS /
+// FlyingResearch) is configured — the AI expansion step turns these broad
+// buckets into specific, sellable long-tail niches. This lets the pipeline
+// run end-to-end with only an OPENAI_API_KEY.
+const EVERGREEN_SEEDS = [
+  "dog mom gifts",
+  "registered nurse appreciation",
+  "teacher life",
+  "fishing dad",
+  "plant lady",
+  "mental health awareness",
+  "gym motivation",
+  "cat lover humor",
+  "retro gaming",
+  "coffee addict",
+  "camping outdoors",
+  "new mom baby shower",
+  "sarcastic office humor",
+  "vintage 80s aesthetic",
+  "book lover reading",
+];
+
+export function getSeedFallbackTrends(): TrendResult[] {
+  return EVERGREEN_SEEDS.map((keyword) => ({
+    keyword,
+    searchVolume: 0,
+    competition: 0.5,
+    trendDirection: "stable",
+    source: "seed_fallback" as const,
+  }));
 }
 
 // PodCS API
@@ -155,7 +187,15 @@ Return your expanded niches as JSON.`;
 }
 
 export async function getAllTrends(): Promise<TrendResult[]> {
-  const podcs = await getPodCSTrends();
+  let podcs = await getPodCSTrends();
+
+  // No paid trend source configured (or it returned nothing)? Fall back to
+  // evergreen seeds so the AI expansion step still has something to work
+  // with. This keeps the pipeline functional with only an OpenAI key.
+  if (podcs.length === 0) {
+    log("info", "[Step 01] No trend-API results — using evergreen seed fallback so the pipeline can still run");
+    podcs = getSeedFallbackTrends();
+  }
 
   // Deduplicate by keyword (case-insensitive)
   const seen = new Map<string, TrendResult>();
