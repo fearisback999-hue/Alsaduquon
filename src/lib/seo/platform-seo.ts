@@ -6,6 +6,42 @@ import type { PlatformSEOHints } from "@/lib/platforms/types";
 
 const useClaude = () => !!process.env.ANTHROPIC_API_KEY;
 
+/**
+ * Real marketplace signals for the niche, collected in Step 1 (search volume,
+ * competition, trend). Threading these into the copy prompts is what turns
+ * blind AI free-association into keyword-targeted SEO: the model can pick
+ * long-tail phrases when competition is high and head terms when it's low,
+ * instead of guessing what buyers search for.
+ */
+export interface NicheMarketData {
+  searchVolume?: number | null;
+  competitionLevel?: number | null;
+  trendDirection?: string | null;
+}
+
+function buildMarketBlock(md?: NicheMarketData): string {
+  if (!md) return "";
+  const parts: string[] = [];
+  if (md.searchVolume != null && md.searchVolume > 0) {
+    parts.push(`Estimated monthly search demand: ~${Math.round(md.searchVolume)}`);
+  }
+  if (md.competitionLevel != null) {
+    const lvl = md.competitionLevel >= 0.75 ? "very high"
+      : md.competitionLevel >= 0.45 ? "high"
+      : md.competitionLevel >= 0.25 ? "moderate" : "low";
+    parts.push(`Marketplace competition: ${lvl} (${md.competitionLevel.toFixed(2)} of 1.0)`);
+  }
+  if (md.trendDirection) parts.push(`Trend direction: ${md.trendDirection}`);
+  if (parts.length === 0) return "";
+  return `
+
+MARKET INTELLIGENCE (real data — use it to choose what to target):
+- ${parts.join("\n- ")}
+- High competition → favor specific long-tail phrases (buyer intent + persona + occasion) over broad head terms you can't rank for.
+- Low competition → you can target the broader high-volume head terms directly.
+- Trending/explosive → lead with the trending term while it's hot.`;
+}
+
 async function completeText(prompt: string, opts: { systemPrompt: string; maxTokens: number; temperature: number }, pipelineRunId?: string) {
   if (useClaude()) {
     const result = await claudeCompletion(prompt, {
@@ -61,11 +97,12 @@ export async function generatePlatformTitleVariants(
   productType: string,
   hints: PlatformSEOHints,
   pipelineRunId?: string,
+  marketData?: NicheMarketData,
 ): Promise<string[]> {
   const prompt = `Generate 3 distinct ${hints.platformName} listing titles for a ${productType} in the "${niche}" niche.
 Design concept: "${conceptTitle}"
 
-Platform-specific guidance: ${hints.seoGuidance}
+Platform-specific guidance: ${hints.seoGuidance}${buildMarketBlock(marketData)}
 
 EXAMPLES of strong titles (learn the structure, do not copy):
 - "Funny Cat Mom T-Shirt | Crazy Cat Lady Gift | Cute Kitten Lover Tee for Women"
@@ -123,12 +160,13 @@ export async function generatePlatformDescription(
   productType: string,
   hints: PlatformSEOHints,
   pipelineRunId?: string,
+  marketData?: NicheMarketData,
 ): Promise<string> {
   const prompt = `Write a ${hints.platformName} listing description for a ${productType} design.
 Niche: "${niche}"
 Design: "${conceptTitle}" - ${conceptDescription}
 
-Platform-specific guidance: ${hints.seoGuidance}
+Platform-specific guidance: ${hints.seoGuidance}${buildMarketBlock(marketData)}
 
 STRUCTURE (follow this order):
 1. EMOTIONAL HOOK (1-2 lines) — speak to who this person IS, what they love, the moment they'll wear/use this
@@ -163,18 +201,20 @@ export async function generatePlatformTags(
   productType: string,
   hints: PlatformSEOHints,
   pipelineRunId?: string,
+  marketData?: NicheMarketData,
 ): Promise<string[]> {
   if (hints.maxTags === 0) return [];
 
   const prompt = `Generate ${hints.maxTags} ${hints.platformName} tags for a ${productType} listing.
 Niche: "${niche}"
-Design: "${conceptTitle}"
+Design: "${conceptTitle}"${buildMarketBlock(marketData)}
 
 Rules:
-- Each tag max ${hints.tagMaxLength} characters
-- Mix of broad and specific keywords
-- Include: niche terms, product type, gift occasion, style descriptors
-- Prioritize high-search-volume terms
+- Each tag max ${hints.tagMaxLength} characters — multi-word long-tail phrases ("dog mom gift", "funny cat tee") rank far better than single words
+- Every tag must be a phrase a real buyer would TYPE into search, not a description of the art
+- Mix: head terms (if competition allows), long-tail buyer phrases, gift occasions, recipient personas, product type
+- No single-word tags unless they're genuinely high-volume; never waste a slot on filler
+- All 13 slots should be distinct phrases (no near-duplicates / plurals of each other)
 
 Return JSON: {"tags": ["tag1", "tag2", ...]}`;
 

@@ -1,6 +1,7 @@
 import type { PlatformStrategy, PlatformListingResult, ListingInput, PlatformSEOHints, PlatformOrderData, PlatformMetricsData } from "./types";
 import { withRetry } from "@/lib/retry";
 import * as etsyClient from "@/lib/external/etsy";
+import { getEtsyTaxonomyId, getEtsyMaterials } from "@/lib/external/etsy-taxonomy";
 
 export const etsyStrategy: PlatformStrategy = {
   id: "etsy",
@@ -16,6 +17,11 @@ export const etsyStrategy: PlatformStrategy = {
       description: data.description,
       price: data.price,
       tags: data.tags.slice(0, 13).map((t) => t.slice(0, 20)),
+      // Category + materials derived from the product type so a mug isn't
+      // filed under "shirts". who_made / production partners / shipping are
+      // applied by the Etsy client from compliance settings.
+      taxonomy_id: getEtsyTaxonomyId(data.productType),
+      materials: getEtsyMaterials(data.productType),
     });
 
     return {

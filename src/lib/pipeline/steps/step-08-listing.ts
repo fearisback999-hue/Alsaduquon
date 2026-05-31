@@ -87,10 +87,17 @@ export default async function execute(context: PipelineContext): Promise<StepRes
       await enforcebudget(0.05);
 
       const seoHints = platform.getSEOHints();
-      const titleVariants = await generatePlatformTitleVariants(niche.name, concept.title, productDisplayName, seoHints, context.pipelineRunId);
+      // Real marketplace signals from Step 1 research — drives keyword choice
+      // instead of letting the model free-associate blind.
+      const marketData = {
+        searchVolume: niche.searchVolume,
+        competitionLevel: niche.competitionLevel,
+        trendDirection: niche.trendDirection,
+      };
+      const titleVariants = await generatePlatformTitleVariants(niche.name, concept.title, productDisplayName, seoHints, context.pipelineRunId, marketData);
       const title = titleVariants[0];
-      const description = await generatePlatformDescription(niche.name, concept.title, concept.description ?? "", productDisplayName, seoHints, context.pipelineRunId);
-      const tags = await generatePlatformTags(niche.name, concept.title, productDisplayName, seoHints, context.pipelineRunId);
+      const description = await generatePlatformDescription(niche.name, concept.title, concept.description ?? "", productDisplayName, seoHints, context.pipelineRunId, marketData);
+      const tags = await generatePlatformTags(niche.name, concept.title, productDisplayName, seoHints, context.pipelineRunId, marketData);
 
       // Generate a second description variant with a different angle
       const descriptionAlt = await generatePlatformDescription(
@@ -100,10 +107,11 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         productDisplayName,
         seoHints,
         context.pipelineRunId,
+        marketData,
       );
 
       // Generate a second tag set variant
-      const tagsAlt = await generatePlatformTags(niche.name, concept.title, productDisplayName, seoHints, context.pipelineRunId);
+      const tagsAlt = await generatePlatformTags(niche.name, concept.title, productDisplayName, seoHints, context.pipelineRunId, marketData);
 
       const descriptionVariants = JSON.stringify([description, descriptionAlt]);
       const tagVariants = JSON.stringify([tags, tagsAlt]);
