@@ -19,6 +19,16 @@ export interface ListingInput {
   printifyShopId?: string;
 }
 
+// A single purchasable variant (size/color combo) with its own price. `title`
+// is the raw print-provider variant title (e.g. "Black / M"); platforms that
+// support variations parse it into their own axes.
+export interface ListingVariant {
+  title: string;
+  priceCents: number;
+  enabled: boolean;
+  sku?: string;
+}
+
 export interface PlatformSEOHints {
   titleMaxLength: number;
   maxTags: number;
@@ -50,6 +60,9 @@ export interface PlatformStrategy {
   isConfigured(): boolean;
   createDraftListing(data: ListingInput): Promise<PlatformListingResult>;
   uploadImages(externalId: string, imageUrls: string[]): Promise<void>;
+  // Optional: add size/color variations after the draft is created. Platforms
+  // that don't support it simply omit this; callers guard with `?.`.
+  syncVariants?(externalId: string, productType: string, variants: ListingVariant[]): Promise<boolean>;
   publishListing(externalId: string): Promise<void>;
   deactivateListing(externalId: string): Promise<void>;
   updatePrice(externalId: string, price: number): Promise<void>;

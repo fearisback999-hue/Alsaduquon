@@ -8,7 +8,37 @@ import { calculateDynamicPrice, getTargetMargin } from "@/lib/pricing/engine";
 import { fullModeration } from "@/lib/ai/moderation";
 import { enforcebudget } from "@/lib/cost/guard";
 import { recordCost } from "@/lib/cost/guard";
+import * as printify from "@/lib/external/printify";
+import type { ListingVariant } from "@/lib/platforms/types";
 import { log } from "@/lib/logger";
+
+/**
+ * Builds the size/color variant list for a product by joining the per-variant
+ * prices stored at Printify-creation time with the human-readable titles from
+ * the print provider's catalog. Returns [] (single SKU) on any problem.
+ */
+async function buildListingVariants(product: {
+  variants: string | null;
+  blueprintId: number | null;
+  printProviderId: number | null;
+}): Promise<ListingVariant[]> {
+  try {
+    const stored = JSON.parse(product.variants ?? "[]") as Array<{ id: number; price: number; is_enabled: boolean }>;
+    if (stored.length < 2 || !product.blueprintId || !product.printProviderId) return [];
+
+    const catalog = await printify.getVariants(product.blueprintId, product.printProviderId);
+    const titleById = new Map(catalog.variants.map((v) => [v.id, v.title]));
+
+    return stored
+      .map((sv) => ({ title: titleById.get(sv.id) ?? "", priceCents: sv.price, enabled: sv.is_enabled }))
+      .filter((v) => v.title.length > 0);
+  } catch (error) {
+    log("warn", "[Step 08] Could not build variant list; listing will be single-SKU", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
+}
 
 async function getEnabledPlatformSetting(db: PipelineContext["db"]): Promise<string[]> {
   const row = await db.select().from(settings).where(eq(settings.key, "enabled_platforms")).get();
@@ -73,6 +103,9 @@ export default async function execute(context: PipelineContext): Promise<StepRes
       .slice(0, 10)
       .map(m => m.storageUrl ?? m.originalUrl!)
       .filter(Boolean);
+
+    // Size/color variants (built once; applied per platform that supports them)
+    const listingVariants = await buildListingVariants(primaryProduct);
 
     const existingListings = await context.db
       .select({ platform: listings.platform })
@@ -144,6 +177,13 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
         if (imageUrls.length > 0) {
           await platform.uploadImages(result.externalId, imageUrls);
+        }
+
+        // Add size/color variations so buyers can pick (apparel without a size
+        // selector barely converts). Fail-safe: the listing stays single-SKU
+        // if the platform doesn't support it or the call fails.
+        if (listingVariants.length > 1 && platform.syncVariants) {
+          await platform.syncVariants(result.externalId, primaryProduct.productType, listingVariants);
         }
 
         if (listingFee > 0) {

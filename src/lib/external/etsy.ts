@@ -190,6 +190,64 @@ export async function getListing(listingId: number): Promise<unknown> {
   return withRetry(() => etsyFetch(`/application/listings/${listingId}`));
 }
 
+export interface EtsyTaxonomyProperty {
+  property_id: number;
+  name: string;
+  display_name: string;
+  supports_variations: boolean;
+  is_required: boolean;
+  possible_values: Array<{ value_id: number; name: string }>;
+  scales: Array<{ scale_id: number; display_name: string }>;
+}
+
+/**
+ * Fetches the variation properties Etsy allows for a taxonomy node — this is
+ * how we learn the correct property_id for "Size" / "Color" in a given
+ * category instead of hardcoding IDs that differ per category and locale.
+ */
+export async function getTaxonomyProperties(taxonomyId: number): Promise<EtsyTaxonomyProperty[]> {
+  const data = (await withRetry(() =>
+    etsyFetch(`/application/seller-taxonomy/nodes/${taxonomyId}/properties`),
+  )) as { results?: EtsyTaxonomyProperty[] };
+  return data.results ?? [];
+}
+
+export interface EtsyInventoryProduct {
+  sku?: string;
+  property_values: Array<{
+    property_id: number;
+    property_name?: string;
+    scale_id?: number;
+    value_ids?: number[];
+    values: string[];
+  }>;
+  offerings: Array<{ price: number; quantity: number; is_enabled: boolean }>;
+}
+
+/**
+ * Replaces a listing's inventory with size/color variations. Etsy's inventory
+ * model: one "product" per variation combo, each with property_values and a
+ * single offering (price/quantity). price_on_property lists the properties
+ * whose value changes the price.
+ */
+export async function updateListingInventory(
+  listingId: number,
+  products: EtsyInventoryProduct[],
+  priceOnProperty: number[],
+): Promise<void> {
+  await withRetry(() =>
+    etsyFetch(`/application/listings/${listingId}/inventory`, {
+      method: "PUT",
+      body: JSON.stringify({
+        products,
+        price_on_property: priceOnProperty,
+        quantity_on_property: [],
+        sku_on_property: [],
+      }),
+    }),
+  );
+}
+
 export async function updateListing(
   listingId: number,
   data: { title?: string; description?: string; price?: number; tags?: string[]; state?: string },

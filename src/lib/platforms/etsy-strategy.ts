@@ -1,7 +1,8 @@
-import type { PlatformStrategy, PlatformListingResult, ListingInput, PlatformSEOHints, PlatformOrderData, PlatformMetricsData } from "./types";
+import type { PlatformStrategy, PlatformListingResult, ListingInput, ListingVariant, PlatformSEOHints, PlatformOrderData, PlatformMetricsData } from "./types";
 import { withRetry } from "@/lib/retry";
 import * as etsyClient from "@/lib/external/etsy";
 import { getEtsyTaxonomyId, getEtsyMaterials } from "@/lib/external/etsy-taxonomy";
+import { syncEtsyInventory, parseVariantTitle, type EtsyVariant } from "@/lib/external/etsy-inventory";
 
 export const etsyStrategy: PlatformStrategy = {
   id: "etsy",
@@ -36,6 +37,14 @@ export const etsyStrategy: PlatformStrategy = {
     for (let i = 0; i < imageUrls.length; i++) {
       await withRetry(() => etsyClient.uploadListingImage(listingId, imageUrls[i], i + 1));
     }
+  },
+
+  async syncVariants(externalId: string, productType: string, variants: ListingVariant[]): Promise<boolean> {
+    const etsyVariants: EtsyVariant[] = variants.map((v) => {
+      const { size, color } = parseVariantTitle(v.title);
+      return { size, color, priceCents: v.priceCents, enabled: v.enabled, sku: v.sku };
+    });
+    return syncEtsyInventory(Number(externalId), getEtsyTaxonomyId(productType), etsyVariants);
   },
 
   async publishListing(externalId: string): Promise<void> {
