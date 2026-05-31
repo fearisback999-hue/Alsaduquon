@@ -64,6 +64,14 @@ export const CLAUDE_SONNET_INPUT_COST_PER_1K = 0.003;
 export const CLAUDE_SONNET_OUTPUT_COST_PER_1K = 0.015;
 export const ETSY_LISTING_FEE = 0.20;
 export const ETSY_TRANSACTION_FEE_PERCENT = 6.5;
+// Fees the pricing engine previously ignored — together ~18 points of margin.
+export const ETSY_PAYMENT_PROCESSING_PERCENT = 3;   // ~3% of order total
+export const ETSY_PAYMENT_PROCESSING_FLAT = 0.25;   // + $0.25 per order
+export const ETSY_OFFSITE_ADS_PERCENT = 15;         // mandatory for shops < $10k/yr, charged on offsite-attributed sales
+// Blended share of orders that are offsite-ad-attributed (not every order
+// incurs the 15%). Tunable via ETSY_OFFSITE_ATTRIBUTION_RATE; 0.2 is a
+// conservative default for a young shop.
+export const ETSY_OFFSITE_ADS_ATTRIBUTION_RATE = 0.2;
 export const SHOPIFY_LISTING_FEE = 0;
 export const TIKTOK_LISTING_FEE = 0;
 export const DEPOP_LISTING_FEE = 0;

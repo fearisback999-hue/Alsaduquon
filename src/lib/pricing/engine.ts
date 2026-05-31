@@ -1,4 +1,40 @@
-import { ETSY_LISTING_FEE, ETSY_TRANSACTION_FEE_PERCENT } from "@/lib/types";
+import {
+  ETSY_LISTING_FEE,
+  ETSY_TRANSACTION_FEE_PERCENT,
+  ETSY_PAYMENT_PROCESSING_PERCENT,
+  ETSY_PAYMENT_PROCESSING_FLAT,
+  ETSY_OFFSITE_ADS_PERCENT,
+  ETSY_OFFSITE_ADS_ATTRIBUTION_RATE,
+} from "@/lib/types";
+
+// The real Etsy fee stack, not just the 6.5% transaction fee. Blended offsite
+// ads = 15% × the share of orders actually attributed to offsite ads.
+const offsiteAttribution = (() => {
+  const raw = parseFloat(process.env.ETSY_OFFSITE_ATTRIBUTION_RATE ?? "");
+  return Number.isFinite(raw) && raw >= 0 && raw <= 1 ? raw : ETSY_OFFSITE_ADS_ATTRIBUTION_RATE;
+})();
+
+const ETSY_VARIABLE_FEE_PCT =
+  ETSY_TRANSACTION_FEE_PERCENT +
+  ETSY_PAYMENT_PROCESSING_PERCENT +
+  ETSY_OFFSITE_ADS_PERCENT * offsiteAttribution;
+const ETSY_FLAT_FEE = ETSY_LISTING_FEE + ETSY_PAYMENT_PROCESSING_FLAT;
+
+/** Total realistic Etsy fees on a single sale at the given retail price. */
+export function estimateEtsyFees(retailPrice: number): number {
+  return ETSY_FLAT_FEE + retailPrice * (ETSY_VARIABLE_FEE_PCT / 100);
+}
+
+/**
+ * Retail price required to net a given margin AFTER the full Etsy fee stack.
+ * Solves: retail − cost − fees(retail) = margin × retail.
+ * Returns Infinity if the margin is unachievable given fees.
+ */
+function priceForNetMargin(cost: number, marginFraction: number): number {
+  const denom = 1 - ETSY_VARIABLE_FEE_PCT / 100 - marginFraction;
+  if (denom <= 0.01) return Infinity;
+  return (cost + ETSY_FLAT_FEE) / denom;
+}
 
 // Product-type specific pricing ranges based on Etsy POD market data
 const PRODUCT_PRICING: Record<string, { minPrice: number; maxPrice: number; typicalCost: number }> = {
@@ -64,8 +100,10 @@ export function calculateDynamicPrice(ctx: PricingContext): PricingResult {
   const productPricing = PRODUCT_PRICING[ctx.productType];
   const minMargin = ctx.minMarginPercent ?? 30;
 
-  // Start with cost-based pricing
-  const costBasedPrice = ctx.baseCost / (1 - ctx.marginPercent / 100);
+  // Start from the price that nets the target margin AFTER all Etsy fees
+  // (not just COGS). Previously this ignored ~18 points of fees, so a "40%"
+  // listing actually cleared ~26%.
+  const costBasedPrice = priceForNetMargin(ctx.baseCost, ctx.marginPercent / 100);
 
   // Demand multiplier from niche score (higher score = higher demand = premium pricing)
   let demandMultiplier = 1.0;
@@ -97,16 +135,18 @@ export function calculateDynamicPrice(ctx: PricingContext): PricingResult {
     adjustedPrice = Math.max(productPricing.minPrice, Math.min(productPricing.maxPrice, adjustedPrice));
   }
 
-  // Ensure minimum margin floor
-  const minAllowedPrice = ctx.baseCost / (1 - minMargin / 100);
+  // Ensure minimum NET margin floor (after fees). Applied after the market
+  // clamp so we never knowingly publish a guaranteed-loss listing — even if
+  // that means pricing above the typical market range.
+  const minAllowedPrice = priceForNetMargin(ctx.baseCost, minMargin / 100);
   adjustedPrice = Math.max(adjustedPrice, minAllowedPrice);
 
   // Round to .99 pricing (psychological pricing)
   const rounded = Math.floor(adjustedPrice) + 0.99;
   const retailPrice = Math.round(rounded * 100) / 100;
 
-  // Recalculate actual margin
-  const etsyFees = ETSY_LISTING_FEE + retailPrice * (ETSY_TRANSACTION_FEE_PERCENT / 100);
+  // Recalculate actual margin against the real fee stack
+  const etsyFees = estimateEtsyFees(retailPrice);
   const actualProfit = retailPrice - ctx.baseCost - etsyFees;
   const actualMargin = retailPrice > 0 ? (actualProfit / retailPrice) * 100 : 0;
 
@@ -176,7 +216,10 @@ export function calculateTeasePrice(
   if (floorMode === "safe") {
     floor = baseCost / (1 - safeMarginPct / 100);
   } else if (floorMode === "absolute") {
-    floor = Math.max(0.99, absoluteFloor);
+    // Never below cost. A "from $5.99" hook that sells at a loss bleeds money
+    // on every bait purchase; we clamp to break-even so the eye-catching low
+    // price is as aggressive as possible WITHOUT a guaranteed per-sale loss.
+    floor = Math.max(0.99, absoluteFloor, baseCost);
   } else {
     floor = baseCost; // break-even
   }

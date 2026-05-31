@@ -1,4 +1,4 @@
-import { ETSY_LISTING_FEE, ETSY_TRANSACTION_FEE_PERCENT } from "@/lib/types";
+import { estimateEtsyFees } from "@/lib/pricing/engine";
 
 /**
  * Calculate retail price from base cost and desired margin.
@@ -16,8 +16,10 @@ export function calculateRetailPrice(
 }
 
 /**
- * Estimate profit after all fees.
- * Etsy fees: $0.20 listing fee + 6.5% transaction fee
+ * Estimate profit after the full Etsy fee stack (transaction + payment
+ * processing + blended offsite ads + listing fee). This feeds both the
+ * dashboard and the niche-learning loop, so undercounting fees here would
+ * crown false "winners" — it must match the pricing engine's fee model.
  */
 export function estimateProfit(
   retailPrice: number,
@@ -31,9 +33,7 @@ export function estimateProfit(
   profitMargin: number;
 } {
   const revenue = retailPrice * quantity;
-  const listingFee = ETSY_LISTING_FEE;
-  const transactionFee = revenue * (ETSY_TRANSACTION_FEE_PERCENT / 100);
-  const etsyFees = listingFee + transactionFee;
+  const etsyFees = estimateEtsyFees(revenue); // flat fee applied once on the order, variable on revenue
   const printifyCost = baseCost * quantity;
   const profit = revenue - etsyFees - printifyCost;
   const profitMargin = revenue > 0 ? (profit / revenue) * 100 : 0;

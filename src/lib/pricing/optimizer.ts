@@ -4,7 +4,7 @@ import { eq, and, gt, lt, sql } from "drizzle-orm";
 import { getPlatform } from "@/lib/platforms/registry";
 import { UnsupportedPlatformOperation, type PlatformId } from "@/lib/platforms/types";
 import { log } from "@/lib/logger";
-import { ETSY_LISTING_FEE, ETSY_TRANSACTION_FEE_PERCENT } from "@/lib/types";
+import { estimateEtsyFees } from "@/lib/pricing/engine";
 
 interface RepricingCandidate {
   listingId: string;
@@ -223,6 +223,5 @@ function determineRepricingAction(c: RepricingCandidate): { type: "raise" | "low
  * Factors in Printify cost, Etsy listing fee, and Etsy transaction fee.
  */
 export function estimateListingProfit(retailPrice: number, baseCost: number): number {
-  const etsyFees = ETSY_LISTING_FEE + retailPrice * (ETSY_TRANSACTION_FEE_PERCENT / 100);
-  return retailPrice - baseCost - etsyFees;
+  return retailPrice - baseCost - estimateEtsyFees(retailPrice);
 }
