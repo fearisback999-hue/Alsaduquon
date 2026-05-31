@@ -40,9 +40,20 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   const seasonalBoostEnabled = seasonalSetting?.value !== "false"; // default true
   const activeSeasons = seasonalBoostEnabled ? getActiveSeasons() : [];
 
+  // Read the score threshold from settings so the dashboard control actually
+  // takes effect (it was previously ignored in favor of the hardcoded constant).
+  const thresholdSetting = await context.db.select().from(settings).where(eq(settings.key, "niche_score_threshold")).get();
+  const parsedThreshold = parseFloat(thresholdSetting?.value ?? "");
+  const scoreThreshold = Number.isFinite(parsedThreshold) ? parsedThreshold : SCORE_THRESHOLD;
+
   let approved = 0;
   let rejected = 0;
   let totalCost = 0;
+
+  // Track every scored niche so we can guarantee the pipeline always advances
+  // with the BEST available niches even when a data-poor run scores everything
+  // just under the threshold (the common case with no paid trend/Etsy APIs).
+  const scoredNiches: { id: string; name: string; composite: number; passed: boolean }[] = [];
 
   for (const niche of toScore) {
     await enforcebudget(0.02); // Pre-research + scoring calls
@@ -212,10 +223,12 @@ Return JSON only:
         }
       }
 
-      const passed = composite >= SCORE_THRESHOLD;
+      const roundedComposite = Math.round(composite * 100) / 100;
+      const passed = composite >= scoreThreshold;
+      scoredNiches.push({ id: niche.id, name: niche.name, composite: roundedComposite, passed });
 
       await context.db.update(niches).set({
-        compositeScore: Math.round(composite * 100) / 100,
+        compositeScore: roundedComposite,
         scoreBreakdown: JSON.stringify({ ...scores, pre_research: research, seasonal_boost: seasonalMatch }),
         passedThreshold: passed,
         salesVelocity: scores.sales_velocity_score,
@@ -250,10 +263,48 @@ Return JSON only:
     }
   }
 
+  // ── Guaranteed minimum: promote the best-available niches ──
+  // Data-poor runs (no paid trend/Etsy APIs) make the AI cluster scores around
+  // 5, just under a 7.5 threshold — which would reject everything and stall the
+  // whole pipeline at step 2. To keep it producing, promote the highest-scoring
+  // niches that clear a quality FLOOR (so we never push genuine garbage) up to a
+  // minimum count. These are the best niches available this run, so quality is
+  // preserved relative to what was discovered.
+  const MIN_VIABLE_NICHES = 3;
+  const QUALITY_FLOOR = Math.max(4, scoreThreshold * 0.6);
+  let promoted = 0;
+
+  if (approved < MIN_VIABLE_NICHES) {
+    const promotable = scoredNiches
+      .filter((s) => !s.passed && s.composite >= QUALITY_FLOOR)
+      .sort((a, b) => b.composite - a.composite)
+      .slice(0, MIN_VIABLE_NICHES - approved);
+
+    for (const candidate of promotable) {
+      await context.db.update(niches).set({
+        status: "approved",
+        passedThreshold: true,
+        updatedAt: new Date().toISOString(),
+      }).where(eq(niches.id, candidate.id));
+      context.approvedNicheIds.push(candidate.id);
+      approved++;
+      rejected--;
+      promoted++;
+      log("info", `[Step 02] Promoted best-available niche "${candidate.name}" (${candidate.composite}/10, below ${scoreThreshold} threshold but above ${QUALITY_FLOOR.toFixed(1)} floor) so the pipeline keeps producing`);
+    }
+
+    if (promotable.length === 0 && scoredNiches.length > 0) {
+      const best = Math.max(...scoredNiches.map((s) => s.composite));
+      log("warn", `[Step 02] No niches cleared the ${QUALITY_FLOOR.toFixed(1)} quality floor (best was ${best}/10) — nothing promoted. Lower niche_score_threshold or improve seed niches.`);
+    }
+  }
+
+  const promotedNote = promoted > 0 ? `, ${promoted} promoted as best-available` : "";
+
   return {
     status: "completed",
-    message: `Scored ${toScore.length} niches: ${approved} approved, ${rejected} rejected (threshold: ${SCORE_THRESHOLD})`,
+    message: `Scored ${toScore.length} niches: ${approved} approved${promotedNote}, ${rejected} rejected (threshold: ${scoreThreshold})`,
     cost: totalCost,
-    data: { scored: toScore.length, approved, rejected },
+    data: { scored: toScore.length, approved, rejected, promoted, threshold: scoreThreshold },
   };
 }
