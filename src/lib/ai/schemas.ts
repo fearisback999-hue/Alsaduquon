@@ -60,6 +60,12 @@ export const ImageQualitySchema = z.object({
   technical_quality: z.number().min(1).max(10),
   overall_score: z.number().min(1).max(10),
   pass: z.boolean(),
+  // Visual IP gate: true if the image depicts any trademarked logo, branded
+  // character, celebrity likeness, sports team mark, or copyrighted artwork.
+  // A true here is an automatic reject regardless of quality scores — it's
+  // the difference between a sale and a permanent Etsy ban.
+  ip_risk: z.boolean(),
+  ip_risk_reason: z.string(),
   issues: z.array(z.string()),
   refinement_suggestion: z.string(),
 });

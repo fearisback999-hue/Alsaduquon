@@ -40,6 +40,15 @@ Score each criterion 1-10:
 4. COMMERCIAL_APPEAL: Would a customer actually buy this at $25-45? Is it attractive and on-trend?
 5. TECHNICAL_QUALITY: No blurriness, no distortion, no AI artifacts (extra fingers, garbled text, weird faces)?
 
+INTELLECTUAL-PROPERTY CHECK (critical — selling on Etsy):
+Set "ip_risk" to true if the image contains ANY of the following, even subtly or stylized:
+- A real brand name, logo, or wordmark (Nike swoosh, Disney, sports teams, car brands, etc.)
+- A recognizable copyrighted character (cartoon, anime, movie, game, mascot)
+- A real celebrity, musician, or public figure's likeness
+- Copyrighted artwork or a distinctive trademarked visual style
+- Recognizable lyrics, movie quotes, or slogans rendered as text
+When in doubt, flag it. A false positive costs one design; a miss costs the whole shop.
+
 Return JSON:
 {
   "composition": <number>,
@@ -49,11 +58,13 @@ Return JSON:
   "technical_quality": <number>,
   "overall_score": <number 1-10>,
   "pass": <boolean>,
+  "ip_risk": <boolean>,
+  "ip_risk_reason": "<what was detected, or empty string if none>",
   "issues": ["<issue1>", "<issue2>"],
   "refinement_suggestion": "<how to improve the prompt if this fails>"
 }
 
-An image passes if overall_score >= 7 AND no individual score is below 5.`;
+An image passes if overall_score >= 7 AND no individual score is below 5 AND ip_risk is false.`;
 }
 
 interface DesignConceptRow {
@@ -249,11 +260,14 @@ export default async function execute(context: PipelineContext): Promise<StepRes
           totalCost += GPT4O_VISION_COST_ESTIMATE;
         }
 
-        // Rank candidates: passing first, then by overall_score descending
+        // Rank candidates: IP-safe & passing first, then by overall_score.
+        // An ip_risk candidate is never preferred — a clean lower-scoring
+        // design beats a high-scoring one that could get the shop banned.
+        const effectivePass = (q: ImageQuality | null) => (q?.pass && !q.ip_risk ? 1 : 0);
         const ranked = candidates.map((c, i) => ({ ...c, quality: scoreResults[i].parsed }));
         ranked.sort((a, b) => {
-          const aPass = a.quality?.pass ? 1 : 0;
-          const bPass = b.quality?.pass ? 1 : 0;
+          const aPass = effectivePass(a.quality);
+          const bPass = effectivePass(b.quality);
           if (aPass !== bPass) return bPass - aPass;
           return (b.quality?.overall_score ?? 0) - (a.quality?.overall_score ?? 0);
         });
@@ -284,7 +298,39 @@ export default async function execute(context: PipelineContext): Promise<StepRes
           });
         }
 
-        // Winner failed — refine and retry
+        // IP risk is a hard reject — NEVER accept it, even on the final
+        // attempt. A quality miss can ship as best-effort; an infringing
+        // image cannot, because publishing it risks the entire shop.
+        if (winner.quality?.ip_risk) {
+          qualityRejected++;
+          await context.db.insert(generatedImages).values({
+            designConceptId: concept.id,
+            prompt: currentPrompt,
+            storagePath: winner.stored.pathname,
+            storageUrl: winner.stored.url,
+            model: generatorName,
+            size: "1024x1024",
+            quality: "hd",
+            attempt,
+            maxAttempts,
+            status: "rejected",
+            qualityScores: serializeQualityScores(winner.quality),
+            errorMessage: JSON.stringify({ reason: "ip_risk", detail: winner.quality.ip_risk_reason }),
+            pipelineRunId: context.pipelineRunId,
+          });
+          log("warn", `[Step 04] IP-rejected image for "${concept.title}": ${winner.quality.ip_risk_reason}`);
+
+          if (attempt < maxAttempts) {
+            currentPrompt = `${concept.stylePrompt ?? concept.title}. CRITICAL: produce 100% original artwork — absolutely NO brand logos, no copyrighted or recognizable characters, no celebrity likeness, no trademarked styles. Detected issue: ${winner.quality.ip_risk_reason}`;
+            continue;
+          }
+          // Out of attempts and still infringing — abandon this concept entirely.
+          await context.db.update(designConcepts).set({ status: "rejected" }).where(eq(designConcepts.id, concept.id));
+          imageGenerated = false;
+          break;
+        }
+
+        // Winner failed quality — refine and retry
         if (winner.quality && !winner.quality.pass && attempt < maxAttempts) {
           qualityRejected++;
           await context.db.insert(generatedImages).values({

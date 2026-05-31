@@ -4,6 +4,7 @@ import { getAllTrends, getFlyingResearchVolume, expandNichesWithAI, type TrendRe
 import { batchValidateNiches } from "@/lib/external/etsy-search";
 import { enforcebudget } from "@/lib/cost/guard";
 import { drillMicroNiches, type MicroNiche } from "@/lib/research/micro-niche-drill";
+import { screenNicheForIP } from "@/lib/ai/moderation";
 import { log } from "@/lib/logger";
 
 const POD_PRODUCT_WORDS = /\b(t-?shirts?|tees?|shirts?|hoodies?|mugs?|cups?|sweatshirts?|tank\s*tops?|posters?|stickers?|prints?|designs?)\b/g;
@@ -116,6 +117,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
   const newNicheIds: string[] = [];
   let skippedDuplicates = 0;
+  let ipBlocked = 0;
 
   for (const trend of allCandidates) {
     const exactName = trend.keyword.toLowerCase().trim();
@@ -130,6 +132,17 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
     if (existingNormalized.has(normalizedName)) {
       skippedDuplicates++;
+      continue;
+    }
+
+    // IP gate at the source. Trend APIs and AI expansion surface trademarked
+    // and derivative keywords ("disney aesthetic", "taylor swift gifts") that
+    // would otherwise flow into concepts, image prompts, titles, and tags —
+    // the #1 cause of permanent Etsy bans. Reject before spending a cent on it.
+    const ipViolation = screenNicheForIP(exactName);
+    if (ipViolation) {
+      ipBlocked++;
+      log("warn", `[Step 01] IP-blocked niche "${exactName}" — ${ipViolation}`);
       continue;
     }
 
@@ -194,10 +207,13 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   if (etsyFiltered > 0) {
     log("info", `[Step 01] Etsy validation filtered out ${etsyFiltered} low-viability niches`);
   }
+  if (ipBlocked > 0) {
+    log("info", `[Step 01] IP gate blocked ${ipBlocked} trademarked/derivative niches before any spend`);
+  }
 
   return {
     status: "completed",
-    message: `Discovered ${newNicheIds.length} new niches from ${trendResults.length} trends + ${expanded.length} AI expansions + ${microDrillResults.length} micro-drilled (${skippedDuplicates} duplicates, ${etsyFiltered} Etsy-filtered)`,
+    message: `Discovered ${newNicheIds.length} new niches from ${trendResults.length} trends + ${expanded.length} AI expansions + ${microDrillResults.length} micro-drilled (${skippedDuplicates} duplicates, ${etsyFiltered} Etsy-filtered, ${ipBlocked} IP-blocked)`,
     data: {
       nichesFound: newNicheIds.length,
       totalTrends: trendResults.length,
@@ -205,6 +221,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
       microDrilled: microDrillResults.length,
       duplicatesSkipped: skippedDuplicates,
       etsyFiltered,
+      ipBlocked,
     },
   };
 }

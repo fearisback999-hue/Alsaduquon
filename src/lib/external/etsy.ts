@@ -74,6 +74,20 @@ async function etsyFetch(path: string, options?: RequestInit): Promise<unknown> 
   return response.json();
 }
 
+/**
+ * Production-partner IDs come from the shop's Etsy settings (Shop Manager →
+ * Settings → Production partners) and must be referenced on every POD listing.
+ * Set ETSY_PRODUCTION_PARTNER_IDS to a comma-separated list of those numeric
+ * IDs. Without them, Etsy treats mass-produced items as falsely "handmade" —
+ * a policy violation that gets POD shops suspended.
+ */
+function getProductionPartnerIds(): number[] {
+  return (process.env.ETSY_PRODUCTION_PARTNER_IDS ?? "")
+    .split(",")
+    .map((s) => parseInt(s.trim(), 10))
+    .filter((n) => Number.isFinite(n) && n > 0);
+}
+
 export async function createDraftListing(data: {
   title: string;
   description: string;
@@ -84,8 +98,15 @@ export async function createDraftListing(data: {
   when_made?: string;
   taxonomy_id?: number;
   shipping_profile_id?: number;
+  materials?: string[];
+  production_partner_ids?: number[];
 }): Promise<{ listing_id: number; url: string; state: string }> {
   const shopId = process.env.ETSY_SHOP_ID!;
+  const productionPartnerIds = data.production_partner_ids ?? getProductionPartnerIds();
+  const shippingProfileId = data.shipping_profile_id
+    ?? (process.env.ETSY_SHIPPING_PROFILE_ID ? Number(process.env.ETSY_SHIPPING_PROFILE_ID) : undefined);
+  const returnPolicyId = process.env.ETSY_RETURN_POLICY_ID ? Number(process.env.ETSY_RETURN_POLICY_ID) : undefined;
+
   return withRetry(() =>
     etsyFetch(`/application/shops/${shopId}/listings`, {
       method: "POST",
@@ -95,13 +116,19 @@ export async function createDraftListing(data: {
         price: { amount: Math.round(data.price * 100), divisor: 100, currency_code: "USD" },
         quantity: data.quantity ?? 999,
         tags: data.tags.slice(0, 13),
-        who_made: data.who_made ?? "i_did",
-        when_made: data.when_made ?? "2020_2025",
-        taxonomy_id: data.taxonomy_id ?? 482, // Clothing > Shirts & Tees
+        // POD compliance: the items are produced by a partner, made to order.
+        // Declaring "i_did" on mass-produced goods is the misrepresentation
+        // Etsy bans shops for.
+        who_made: data.who_made ?? "i_did_not",
+        when_made: data.when_made ?? "made_to_order",
+        taxonomy_id: data.taxonomy_id ?? 482, // Clothing > Shirts & Tees (override per product type)
         type: "physical",
         is_digital: false,
         state: "draft",
-        ...(data.shipping_profile_id && { shipping_profile_id: data.shipping_profile_id }),
+        ...(data.materials && data.materials.length > 0 && { materials: data.materials.slice(0, 13) }),
+        ...(productionPartnerIds.length > 0 && { production_partner_ids: productionPartnerIds }),
+        ...(shippingProfileId && { shipping_profile_id: shippingProfileId }),
+        ...(returnPolicyId && { return_policy_id: returnPolicyId }),
       }),
     }),
   ) as Promise<{ listing_id: number; url: string; state: string }>;

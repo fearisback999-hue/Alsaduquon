@@ -102,6 +102,64 @@ const ETSY_BANNED_TERMS = [
 
   // Misc high-risk
   "us army logo", "us navy logo", "marines logo", "air force logo",
+
+  // More franchises / characters (high-DMCA categories)
+  "bluey", "peppa pig", "cocomelon", "paw patrol", "pj masks",
+  "sonic the hedgehog", "kirby", "animal crossing", "splatoon",
+  "naruto", "dragon ball", "goku", "one piece", "demon slayer",
+  "attack on titan", "my hero academia", "studio ghibli", "totoro",
+  "sailor moon", "hello kitty", "stranger things", "squid game",
+  "wednesday addams", "the office", "friends tv", "game of thrones",
+  "the mandalorian", "ted lasso", "barbie movie",
+  "grinch", "dr seuss", "cat in the hat",
+  "garfield", "snoopy", "calvin and hobbes",
+  "bob ross", "where's waldo",
+
+  // Memes / web IP with active rights holders
+  "pepe the frog", "wojak", "grumpy cat", "nyan cat",
+  "doge", "shrek", "baby shark",
+
+  // Streamers / influencers / creators (right of publicity)
+  "mrbeast", "mr beast", "pewdiepie", "ninja gamer",
+  "kardashian", "kylie jenner", "kim kardashian",
+
+  // Music acts (likeness/marks)
+  "ariana grande", "billie eilish", "olivia rodrigo", "harry styles",
+  "the weeknd", "kanye west", "kendrick lamar", "travis scott",
+  "nirvana", "metallica", "pink floyd", "ac/dc",
+
+  // Sports teams / orgs (city + name combos are trademarked)
+  "lakers", "yankees", "cowboys", "patriots", "real madrid",
+  "manchester united", "barcelona fc", "golden state warriors",
+
+  // More auto / brands
+  "jeep", "ford mustang", "chevy", "corvette", "bmw logo",
+  "mercedes logo", "audi logo", "toyota logo",
+
+  // More luxury / streetwear
+  "stussy", "bape", "a bathing ape", "yeezy", "jordan brand",
+  "air jordan", "new balance", "crocs", "uggs",
+
+  // Misc brands frequently infringed
+  "stanley cup tumbler", "yeti cooler", "in-n-out", "trader joe's",
+  "lululemon", "sephora", "hot wheels", "barbie doll",
+];
+
+// Pattern-based IP red flags — deliberately HIGH-PRECISION. These phrasings
+// almost always indicate derivative/infringing intent and rarely appear in
+// legitimate original listings. We intentionally do NOT flag common, legal
+// niche words like "aesthetic", "style", "themed", or bare "inspired" —
+// "boho aesthetic poster" and "nature inspired wall art" are perfectly fine,
+// and blocking them would gut the catalog (false positives cost revenue too).
+// The exact-term blocklist above is the main workhorse; these catch the
+// evasions that slip brand names past it.
+const RISKY_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+  { pattern: /\bfan\s*art\b/i, label: '"fan art" (unlicensed derivative)' },
+  { pattern: /\bfan[\s-]*made\b/i, label: '"fan made" (unlicensed derivative)' },
+  { pattern: /\bin the style of\b/i, label: '"in the style of" (copies a specific artist/brand)' },
+  { pattern: /\b(?:un)?official\s+\w+\s*(?:merch|merchandise)\b/i, label: 'brand merch claim ("official/unofficial ... merch")' },
+  { pattern: /\bofficial merchandise\b/i, label: '"official merchandise" (implies licensed brand goods)' },
+  { pattern: /\bparody of\b/i, label: '"parody of" (names a specific IP)' },
 ];
 
 export async function moderateContent(text: string): Promise<ModerationResult> {
@@ -135,10 +193,29 @@ export function checkEtsyPolicy(text: string): { passed: boolean; violations: st
     }
   }
 
+  for (const { pattern, label } of RISKY_PATTERNS) {
+    if (pattern.test(lower)) {
+      violations.push(`Matches IP-risk pattern: ${label}`);
+    }
+  }
+
   return {
     passed: violations.length === 0,
     violations,
   };
+}
+
+/**
+ * Synchronous IP screen for a niche keyword at discovery time, before any
+ * money is spent generating concepts/images for it. A trademarked or
+ * derivative niche name poisons the entire downstream pipeline (concepts,
+ * image prompts, titles, tags), so we reject it at the source rather than
+ * hoping later moderation catches every leaf. Returns the first violation
+ * reason for logging, or null when the keyword is clean.
+ */
+export function screenNicheForIP(keyword: string): string | null {
+  const { passed, violations } = checkEtsyPolicy(keyword);
+  return passed ? null : violations[0];
 }
 
 export async function fullModeration(text: string): Promise<{
