@@ -175,6 +175,10 @@ function serializeQualityScores(quality: ImageQuality): string {
     commercial_appeal: quality.commercial_appeal,
     technical_quality: quality.technical_quality,
     overall_score: quality.overall_score,
+    // Persist the IP verdict too — without it, an audit of why an image was
+    // rejected (or how a bad one slipped through) has no record of the gate.
+    ip_risk: quality.ip_risk,
+    ip_risk_reason: quality.ip_risk_reason,
   });
 }
 
@@ -298,10 +302,43 @@ export default async function execute(context: PipelineContext): Promise<StepRes
           });
         }
 
+        // Vision scoring returned no parseable verdict (parsed: null — model
+        // refused, malformed JSON, or API hiccup). We cannot certify this
+        // image as quality-OK *or* IP-safe, and an unscreened image is exactly
+        // as dangerous as a known-infringing one: publishing it could get the
+        // shop banned. So it is NEVER a pass. Retry while attempts remain (it's
+        // a scoring failure, not a design failure, so keep the prompt); abandon
+        // the concept if we're out of attempts. This closes the fail-open where
+        // a null verdict skipped both the IP and quality gates below.
+        if (!winner.quality) {
+          qualityRejected++;
+          await context.db.insert(generatedImages).values({
+            designConceptId: concept.id,
+            prompt: currentPrompt,
+            storagePath: winner.stored.pathname,
+            storageUrl: winner.stored.url,
+            model: generatorName,
+            size: "1024x1024",
+            quality: "hd",
+            attempt,
+            maxAttempts,
+            status: "rejected",
+            qualityScores: null,
+            errorMessage: JSON.stringify({ reason: "quality_unparseable" }),
+            pipelineRunId: context.pipelineRunId,
+          });
+          log("warn", `[Step 04] Vision scoring returned no verdict for "${concept.title}" — cannot certify quality/IP, treating as reject`);
+
+          if (attempt < maxAttempts) continue;
+          await context.db.update(designConcepts).set({ status: "rejected" }).where(eq(designConcepts.id, concept.id));
+          imageGenerated = false;
+          break;
+        }
+
         // IP risk is a hard reject — NEVER accept it, even on the final
         // attempt. A quality miss can ship as best-effort; an infringing
         // image cannot, because publishing it risks the entire shop.
-        if (winner.quality?.ip_risk) {
+        if (winner.quality.ip_risk) {
           qualityRejected++;
           await context.db.insert(generatedImages).values({
             designConceptId: concept.id,
@@ -331,7 +368,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         }
 
         // Winner failed quality — refine and retry
-        if (winner.quality && !winner.quality.pass && attempt < maxAttempts) {
+        if (!winner.quality.pass && attempt < maxAttempts) {
           qualityRejected++;
           await context.db.insert(generatedImages).values({
             designConceptId: concept.id,
@@ -374,7 +411,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
           attempt,
           maxAttempts,
           status: "generated",
-          qualityScores: winner.quality ? serializeQualityScores(winner.quality) : null,
+          qualityScores: serializeQualityScores(winner.quality),
           pipelineRunId: context.pipelineRunId,
         }).returning();
 

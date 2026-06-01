@@ -88,11 +88,20 @@ export async function refreshDeactivatedListings(): Promise<RefreshResult> {
     try {
       const seoHints = platform.getSEOHints();
       const productDisplayName = getProductDisplayName(product.productType);
+      // Same real marketplace signals the initial listing used (Step 8) so the
+      // refreshed copy targets actual buyer search terms instead of free-
+      // associating — otherwise the "second life" rewrite throws away the one
+      // edge it has over the dead original.
+      const marketData = {
+        searchVolume: niche.searchVolume,
+        competitionLevel: niche.competitionLevel,
+        trendDirection: niche.trendDirection,
+      };
 
       const [titleVariants, description, tags] = await Promise.all([
-        generatePlatformTitleVariants(niche.name, concept.title, productDisplayName, seoHints),
-        generatePlatformDescription(niche.name, concept.title, concept.description ?? "", productDisplayName, seoHints),
-        generatePlatformTags(niche.name, concept.title, productDisplayName, seoHints),
+        generatePlatformTitleVariants(niche.name, concept.title, productDisplayName, seoHints, undefined, marketData),
+        generatePlatformDescription(niche.name, concept.title, concept.description ?? "", productDisplayName, seoHints, undefined, marketData),
+        generatePlatformTags(niche.name, concept.title, productDisplayName, seoHints, undefined, marketData),
       ]);
 
       const newTitle = titleVariants[0];

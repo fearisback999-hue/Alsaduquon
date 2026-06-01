@@ -25,10 +25,18 @@ export interface EtsyVariant {
 
 // Apparel sizes, dimension sizes ("12x16", "18 x 24"), and volume ("11oz").
 const SIZE_TOKEN = /^(?:y(?:outh)?\s*)?(?:x{0,3}s|s|m|l|x{0,3}l|\d?xl|\d+\s*[x×]\s*\d+|\d+(?:\.\d+)?\s*oz|nb|\d+m)$/i;
+// "One Size" / "OS" / "One Size Fits All" / "OSFA" — the size axis for
+// one-size items (tote bags, some hats); otherwise it lands in color.
+const ONE_SIZE = /^(?:one[\s-]?size(?:\s+fits\s+all)?|os(?:fa)?)$/i;
+// Phone/device models ARE the size axis on a case listing ("iPhone 14 Pro",
+// "Samsung Galaxy S23") — without this they'd be misread as a color.
+const DEVICE_MODEL = /\b(?:iphone|samsung|galaxy|pixel|ipad|macbook)\b/i;
 
 function looksLikeSize(token: string): boolean {
   const t = token.trim();
   if (SIZE_TOKEN.test(t)) return true;
+  if (ONE_SIZE.test(t)) return true;
+  if (DEVICE_MODEL.test(t)) return true;
   // "2XL", "3XL", "Youth Small", "Youth XS" etc.
   if (/^\d?x{1,3}l$/i.test(t)) return true;
   if (/^youth\b/i.test(t)) return true;

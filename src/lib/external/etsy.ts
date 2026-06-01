@@ -200,16 +200,27 @@ export interface EtsyTaxonomyProperty {
   scales: Array<{ scale_id: number; display_name: string }>;
 }
 
+// Taxonomy properties are static per category (and per locale, which is fixed
+// for the shop), so we cache them for the process lifetime. A batch of listings
+// in one pipeline run otherwise refetches the same node properties once per
+// listing, burning rate-limit budget on an answer that never changes.
+const taxonomyPropertyCache = new Map<number, EtsyTaxonomyProperty[]>();
+
 /**
  * Fetches the variation properties Etsy allows for a taxonomy node — this is
  * how we learn the correct property_id for "Size" / "Color" in a given
  * category instead of hardcoding IDs that differ per category and locale.
  */
 export async function getTaxonomyProperties(taxonomyId: number): Promise<EtsyTaxonomyProperty[]> {
+  const cached = taxonomyPropertyCache.get(taxonomyId);
+  if (cached) return cached;
+
   const data = (await withRetry(() =>
     etsyFetch(`/application/seller-taxonomy/nodes/${taxonomyId}/properties`),
   )) as { results?: EtsyTaxonomyProperty[] };
-  return data.results ?? [];
+  const results = data.results ?? [];
+  taxonomyPropertyCache.set(taxonomyId, results);
+  return results;
 }
 
 export interface EtsyInventoryProduct {

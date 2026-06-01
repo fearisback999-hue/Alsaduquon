@@ -103,7 +103,11 @@ export function calculateDynamicPrice(ctx: PricingContext): PricingResult {
   // Start from the price that nets the target margin AFTER all Etsy fees
   // (not just COGS). Previously this ignored ~18 points of fees, so a "40%"
   // listing actually cleared ~26%.
-  const costBasedPrice = priceForNetMargin(ctx.baseCost, ctx.marginPercent / 100);
+  let costBasedPrice = priceForNetMargin(ctx.baseCost, ctx.marginPercent / 100);
+  // priceForNetMargin returns Infinity when the requested margin is
+  // unachievable against the fee stack (>~87%). Fall back to a sane COGS
+  // multiple so we never produce NaN after the .99 rounding below.
+  if (!Number.isFinite(costBasedPrice)) costBasedPrice = ctx.baseCost * 3;
 
   // Demand multiplier from niche score (higher score = higher demand = premium pricing)
   let demandMultiplier = 1.0;
@@ -139,7 +143,7 @@ export function calculateDynamicPrice(ctx: PricingContext): PricingResult {
   // clamp so we never knowingly publish a guaranteed-loss listing — even if
   // that means pricing above the typical market range.
   const minAllowedPrice = priceForNetMargin(ctx.baseCost, minMargin / 100);
-  adjustedPrice = Math.max(adjustedPrice, minAllowedPrice);
+  if (Number.isFinite(minAllowedPrice)) adjustedPrice = Math.max(adjustedPrice, minAllowedPrice);
 
   // Round to .99 pricing (psychological pricing)
   const rounded = Math.floor(adjustedPrice) + 0.99;
@@ -189,15 +193,18 @@ export interface TeasePricingOptions {
  * is selected to be the largest size in the least popular color, so it's
  * rarely actually purchased.
  *
+ * All floors are fee-inclusive: selling at exactly COGS still loses the Etsy
+ * fee stack (~12.5% + flat) on every order, so "break-even" here means $0 net
+ * AFTER fees, not merely above product cost.
+ *
  * Floor modes:
- *   - "safe":     hook >= cost + safeMarginPct (no loss possible, but the
- *                 displayed 'from' price stays high — won't hit $5-7 zone)
- *   - "cost":     hook >= product cost (break-even when bought; this is
- *                 the recommended balance for most shops)
- *   - "absolute": hook >= absoluteFloor literal $ amount, ignoring cost.
- *                 Lets you hit a $5.99 'from' price even when product
- *                 cost is higher — every sale of this variant loses money,
- *                 but it's the eye-catching look real Etsy POD shops use.
+ *   - "safe":     hook nets >= safeMarginPct after fees (no loss possible, but
+ *                 the displayed 'from' price stays high — won't hit $5-7 zone)
+ *   - "cost":     hook >= fee-inclusive break-even ($0 net; the recommended
+ *                 balance for most shops)
+ *   - "absolute": hook >= max(absoluteFloor, fee-inclusive break-even). Lets
+ *                 you chase a low 'from' price, but never below true break-even
+ *                 — the eye-catching look without a guaranteed per-sale loss.
  */
 export function calculateTeasePrice(
   fullPrice: number,
@@ -212,16 +219,24 @@ export function calculateTeasePrice(
   const safeDiscount = Math.max(0, Math.min(95, discountPct));
   const targetHook = fullPrice * (1 - safeDiscount / 100);
 
+  // True break-even isn't COGS — a sale at exactly baseCost still loses the
+  // Etsy fee stack on every order. This is the lowest price that nets $0 after
+  // fees; never floor a hook below it or each bait sale bleeds money.
+  const breakEven = priceForNetMargin(baseCost, 0);
+
   let floor: number;
   if (floorMode === "safe") {
-    floor = baseCost / (1 - safeMarginPct / 100);
+    const netFloor = priceForNetMargin(baseCost, safeMarginPct / 100);
+    // Fall back to a COGS markup if that net margin is unachievable against
+    // the fee stack, so the floor stays finite.
+    floor = Number.isFinite(netFloor) ? netFloor : baseCost / (1 - safeMarginPct / 100);
   } else if (floorMode === "absolute") {
-    // Never below cost. A "from $5.99" hook that sells at a loss bleeds money
-    // on every bait purchase; we clamp to break-even so the eye-catching low
+    // A "from $5.99" hook that sells below break-even bleeds money on every
+    // bait purchase; clamp to fee-inclusive break-even so the eye-catching low
     // price is as aggressive as possible WITHOUT a guaranteed per-sale loss.
-    floor = Math.max(0.99, absoluteFloor, baseCost);
+    floor = Math.max(0.99, absoluteFloor, breakEven);
   } else {
-    floor = baseCost; // break-even
+    floor = breakEven; // $0 net after fees
   }
 
   const rawHook = Math.max(targetHook, floor);
