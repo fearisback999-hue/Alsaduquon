@@ -3,6 +3,7 @@ import { printifyProducts, mockups, listings, designConcepts, niches, settings }
 import { eq, inArray } from "drizzle-orm";
 import { getEnabledPlatforms } from "@/lib/platforms/registry";
 import { generatePlatformTitleVariants, generatePlatformDescription, generatePlatformTags, calculateSEOScore } from "@/lib/seo/platform-seo";
+import { optimizeEtsyListing } from "@/lib/seo/etsy-optimizer";
 import { getProductDisplayName } from "@/lib/printify/product-config";
 import { calculateDynamicPrice, getTargetMargin } from "@/lib/pricing/engine";
 import { fullModeration } from "@/lib/ai/moderation";
@@ -128,9 +129,8 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         trendDirection: niche.trendDirection,
       };
       const titleVariants = await generatePlatformTitleVariants(niche.name, concept.title, productDisplayName, seoHints, context.pipelineRunId, marketData);
-      const title = titleVariants[0];
       const description = await generatePlatformDescription(niche.name, concept.title, concept.description ?? "", productDisplayName, seoHints, context.pipelineRunId, marketData);
-      const tags = await generatePlatformTags(niche.name, concept.title, productDisplayName, seoHints, context.pipelineRunId, marketData);
+      const rawTags = await generatePlatformTags(niche.name, concept.title, productDisplayName, seoHints, context.pipelineRunId, marketData);
 
       // Generate a second description variant with a different angle
       const descriptionAlt = await generatePlatformDescription(
@@ -145,6 +145,27 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
       // Generate a second tag set variant
       const tagsAlt = await generatePlatformTags(niche.name, concept.title, productDisplayName, seoHints, context.pipelineRunId, marketData);
+
+      // Deterministic Etsy-SEO finishing pass: pick the strongest title by
+      // Etsy's ranking rubric, mirror its phrases into tags, and fill all 13
+      // slots with buyer-intent long-tail. Applies the mechanical levers the
+      // LLM uses inconsistently — every listing, every time.
+      const seo = optimizeEtsyListing({
+        niche: niche.name,
+        conceptTitle: concept.title,
+        productType: productDisplayName,
+        titleVariants,
+        tags: rawTags,
+        buyerPersona: niche.buyerPersona,
+        occasion: niche.occasion,
+        maxTitleLength: seoHints.titleMaxLength,
+        maxTags: seoHints.maxTags,
+        maxTagLength: seoHints.tagMaxLength,
+      });
+      const title = seo.title;
+      const tags = seo.tags;
+      const orderedTitleVariants = seo.titleVariants;
+      log("info", `[Step 08] SEO-optimized "${niche.name}" — title ${seo.titleScore}/100 (${seo.rationale.join("; ")}), ${tags.length} tags`);
 
       const descriptionVariants = JSON.stringify([description, descriptionAlt]);
       const tagVariants = JSON.stringify([tags, tagsAlt]);
@@ -199,7 +220,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
           printifyProductId: primaryProduct.id,
           externalListingId: result.externalId,
           title,
-          titleVariants: titleVariants.length > 1 ? JSON.stringify(titleVariants) : null,
+          titleVariants: orderedTitleVariants.length > 1 ? JSON.stringify(orderedTitleVariants) : null,
           titleVariantIndex: 0,
           description,
           descriptionVariants,

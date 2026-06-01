@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { listings, listingMetrics, printifyProducts, designConcepts, niches } from "@/lib/db/schema";
 import { eq, and, lt, sql, desc } from "drizzle-orm";
 import { generatePlatformTitleVariants, generatePlatformDescription, generatePlatformTags, calculateSEOScore } from "@/lib/seo/platform-seo";
+import { optimizeEtsyListing } from "@/lib/seo/etsy-optimizer";
 import { getPlatform } from "@/lib/platforms/registry";
 import { UnsupportedPlatformOperation, type PlatformId } from "@/lib/platforms/types";
 import { getProductDisplayName } from "@/lib/printify/product-config";
@@ -98,13 +99,28 @@ export async function refreshDeactivatedListings(): Promise<RefreshResult> {
         trendDirection: niche.trendDirection,
       };
 
-      const [titleVariants, description, tags] = await Promise.all([
+      const [titleVariants, description, rawTags] = await Promise.all([
         generatePlatformTitleVariants(niche.name, concept.title, productDisplayName, seoHints, undefined, marketData),
         generatePlatformDescription(niche.name, concept.title, concept.description ?? "", productDisplayName, seoHints, undefined, marketData),
         generatePlatformTags(niche.name, concept.title, productDisplayName, seoHints, undefined, marketData),
       ]);
 
-      const newTitle = titleVariants[0];
+      // Same deterministic Etsy-SEO finishing pass the initial listing gets
+      // (step-08) so a refreshed listing is held to the identical standard.
+      const seo = optimizeEtsyListing({
+        niche: niche.name,
+        conceptTitle: concept.title,
+        productType: productDisplayName,
+        titleVariants,
+        tags: rawTags,
+        buyerPersona: niche.buyerPersona,
+        occasion: niche.occasion,
+        maxTitleLength: seoHints.titleMaxLength,
+        maxTags: seoHints.maxTags,
+        maxTagLength: seoHints.tagMaxLength,
+      });
+      const newTitle = seo.title;
+      const tags = seo.tags;
       const seoScore = calculateSEOScore(newTitle, description, tags, seoHints);
 
       // Update title on the platform
@@ -132,7 +148,7 @@ export async function refreshDeactivatedListings(): Promise<RefreshResult> {
 
       await db.update(listings).set({
         title: newTitle,
-        titleVariants: titleVariants.length > 1 ? JSON.stringify(titleVariants) : null,
+        titleVariants: seo.titleVariants.length > 1 ? JSON.stringify(seo.titleVariants) : null,
         titleVariantIndex: 0,
         description,
         tags: JSON.stringify(tags),

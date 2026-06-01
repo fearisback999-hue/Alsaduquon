@@ -4,6 +4,7 @@ import { getAllTrends, getFlyingResearchVolume, expandNichesWithAI, type TrendRe
 import { batchValidateNiches } from "@/lib/external/etsy-search";
 import { enforcebudget } from "@/lib/cost/guard";
 import { drillMicroNiches, type MicroNiche } from "@/lib/research/micro-niche-drill";
+import { rankCandidates } from "@/lib/research/candidate-ranking";
 import { screenNicheForIP } from "@/lib/ai/moderation";
 import { log } from "@/lib/logger";
 
@@ -93,10 +94,27 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
   const allCandidates = [...trendResults, ...expanded, ...microDrillResults];
 
+  // ---- PRE-RANK + CAP ----
+  // Rank every candidate on the hard signals we already have (demand,
+  // competition, trend momentum, long-tail specificity) so the best niches are
+  // processed first and survive the per-run cap. This focuses the expensive
+  // Step-2 AI scoring (2 LLM calls/niche) on the highest-potential niches
+  // instead of burning budget down a long tail of also-rans. The cap defaults
+  // generously (so normal runs are untouched) and only reins in floods; set
+  // MAX_NICHES_PER_RUN to tighten spend.
+  const maxPerRun = (() => {
+    const n = parseInt(process.env.MAX_NICHES_PER_RUN ?? "", 10);
+    return Number.isFinite(n) && n > 0 ? n : 60;
+  })();
+  const rankedCandidates = rankCandidates(allCandidates);
+  // Validate with 2× headroom so dedup / IP / viability filtering still leaves
+  // ~maxPerRun survivors, without paying to validate the entire long tail.
+  const candidatePool = rankedCandidates.slice(0, Math.min(rankedCandidates.length, maxPerRun * 2));
+
   // ---- ETSY MARKETPLACE VALIDATION ----
-  // Validate ALL candidates (especially AI-expanded ones) against real Etsy data.
+  // Validate candidates (especially AI-expanded ones) against real Etsy data.
   // Kills niches with zero demand before we waste money scoring/generating for them.
-  const candidateKeywords = allCandidates.map((c) => c.keyword);
+  const candidateKeywords = candidatePool.map((c) => c.keyword);
   const etsyValidation = await batchValidateNiches(candidateKeywords);
 
   // Only enforce the Etsy viability gate when Etsy is actually connected.
@@ -119,7 +137,11 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   let skippedDuplicates = 0;
   let ipBlocked = 0;
 
-  for (const trend of allCandidates) {
+  for (const trend of candidatePool) {
+    // Stop once we've filled the run's best-N budget — candidatePool is
+    // ranked, so the survivors are the highest-potential niches.
+    if (newNicheIds.length >= maxPerRun) break;
+
     const exactName = trend.keyword.toLowerCase().trim();
     const normalizedName = normalizeForDedup(exactName);
 
