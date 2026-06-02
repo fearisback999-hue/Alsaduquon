@@ -8,6 +8,7 @@ import { Zap, Lock, ArrowRight, AlertCircle, ShieldAlert, Eye, EyeOff } from "lu
 import { SplineScene } from "@/components/ui/splite";
 import { Spotlight } from "@/components/ui/spotlight";
 import { CanvasRevealEffect } from "@/components/ui/canvas-reveal-effect";
+import { HeroGeometric } from "@/components/ui/shape-landing-hero";
 
 export default function LoginPage() {
   const [password, setPassword] = useState("");
@@ -113,6 +114,9 @@ export default function LoginPage() {
         <div className="absolute top-0 left-0 right-0 h-1/3 bg-gradient-to-b from-black via-black/80 to-transparent" />
         <div className="absolute bottom-0 left-0 right-0 h-1/4 bg-gradient-to-t from-black to-transparent" />
       </div>
+
+      {/* Floating geometric shapes */}
+      <HeroGeometric />
 
       {/* Spotlight effect */}
       <Spotlight

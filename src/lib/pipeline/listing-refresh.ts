@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { listings, listingMetrics, printifyProducts, designConcepts, niches } from "@/lib/db/schema";
-import { eq, and, lt, sql, desc } from "drizzle-orm";
+import { eq, and, lt } from "drizzle-orm";
 import { generatePlatformTitleVariants, generatePlatformDescription, generatePlatformTags, calculateSEOScore } from "@/lib/seo/platform-seo";
 import { optimizeEtsyListing } from "@/lib/seo/etsy-optimizer";
 import { getPlatform } from "@/lib/platforms/registry";
