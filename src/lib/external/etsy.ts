@@ -1,6 +1,7 @@
 import { ExternalAPIError } from "@/lib/errors";
 import { withRetry } from "@/lib/retry";
 import { rateLimit } from "./rate-limiter";
+import { fetchWithTimeout } from "./fetch-timeout";
 
 const BASE_URL = "https://openapi.etsy.com/v3";
 
@@ -12,7 +13,7 @@ let tokenExpiresAt = 0;
 let refreshInFlight: Promise<string> | null = null;
 
 async function doRefresh(): Promise<string> {
-  const response = await fetch("https://api.etsy.com/v3/public/oauth/token", {
+  const response = await fetchWithTimeout("https://api.etsy.com/v3/public/oauth/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -55,7 +56,7 @@ async function etsyFetch(path: string, options?: RequestInit): Promise<unknown> 
   await rateLimit("etsy");
   const token = await getAccessToken();
 
-  const response = await fetch(`${BASE_URL}${path}`, {
+  const response = await fetchWithTimeout(`${BASE_URL}${path}`, {
     ...options,
     headers: {
       Authorization: `Bearer ${token}`,

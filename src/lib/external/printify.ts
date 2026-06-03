@@ -1,13 +1,14 @@
 import { ExternalAPIError } from "@/lib/errors";
 import { withRetry } from "@/lib/retry";
 import { rateLimit } from "./rate-limiter";
+import { fetchWithTimeout } from "./fetch-timeout";
 
 const BASE_URL = "https://api.printify.com/v1";
 
 async function printifyFetch(path: string, options?: RequestInit): Promise<unknown> {
   await rateLimit("printify");
 
-  const response = await fetch(`${BASE_URL}${path}`, {
+  const response = await fetchWithTimeout(`${BASE_URL}${path}`, {
     ...options,
     headers: {
       Authorization: `Bearer ${process.env.PRINTIFY_API_TOKEN}`,

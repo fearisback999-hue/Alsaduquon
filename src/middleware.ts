@@ -37,11 +37,18 @@ export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (pathname.startsWith("/api/cron/")) {
-    const cronSecret = request.headers.get("authorization")?.replace("Bearer ", "");
-    const fromVercelCron = request.headers.get("x-vercel-cron") === "1";
-    const authorized =
-      cronSecret === process.env.CRON_SECRET &&
-      (fromVercelCron || process.env.NODE_ENV !== "production");
+    // Authenticate via the secret bearer token only. Vercel Cron sends
+    // `Authorization: Bearer $CRON_SECRET` automatically when CRON_SECRET is
+    // set in the project env, so we do NOT trust the `x-vercel-cron` header —
+    // it is client-supplied and trivially spoofable. In production the secret
+    // is REQUIRED (fail closed); in dev we allow when it's unset for local
+    // testing.
+    const isProd = process.env.NODE_ENV === "production";
+    const cronSecret = process.env.CRON_SECRET;
+    const auth = request.headers.get("authorization");
+    const authorized = isProd
+      ? !!cronSecret && auth === `Bearer ${cronSecret}`
+      : !cronSecret || auth === `Bearer ${cronSecret}`;
     if (!authorized) {
       return addSecurityHeaders(
         NextResponse.json({ error: "Unauthorized" }, { status: 401 }),

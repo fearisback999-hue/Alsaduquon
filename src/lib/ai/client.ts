@@ -7,7 +7,16 @@ const globalForOpenAI = globalThis as unknown as { openai: OpenAI | undefined };
 export function getOpenAI(): OpenAI {
   if (globalForOpenAI.openai) return globalForOpenAI.openai;
 
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  // An OpenAI call with no timeout can hang indefinitely if the connection
+  // stalls, freezing the pipeline step that's holding the run lock until the
+  // 30-min staleness reaper kicks in. Bound every request: 120s is generous
+  // even for DALL-E 3 HD (typically <60s), and the SDK retries transient
+  // 429/5xx/network errors with exponential backoff before giving up.
+  const client = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+    timeout: 120_000,
+    maxRetries: 2,
+  });
 
   if (process.env.NODE_ENV !== "production") {
     globalForOpenAI.openai = client;

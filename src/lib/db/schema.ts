@@ -85,6 +85,7 @@ export const niches = sqliteTable("niches", {
   statusIdx: index("niches_status_idx").on(table.status),
   scoreIdx: index("niches_score_idx").on(table.compositeScore),
   nameIdx: uniqueIndex("niches_name_idx").on(table.name),
+  pipelineRunIdx: index("niches_run_idx").on(table.pipelineRunId),
 }));
 
 export const nicheVelocitySnapshots = sqliteTable("niche_velocity_snapshots", {
@@ -124,6 +125,7 @@ export const designConcepts = sqliteTable("design_concepts", {
 }, (table) => ({
   nicheIdx: index("concepts_niche_idx").on(table.nicheId),
   statusIdx: index("concepts_status_idx").on(table.status),
+  pipelineRunIdx: index("concepts_run_idx").on(table.pipelineRunId),
 }));
 
 // ============================================================
@@ -151,6 +153,7 @@ export const generatedImages = sqliteTable("generated_images", {
 }, (table) => ({
   conceptIdx: index("images_concept_idx").on(table.designConceptId),
   statusIdx: index("images_status_idx").on(table.status),
+  pipelineRunIdx: index("images_run_idx").on(table.pipelineRunId),
 }));
 
 // ============================================================
@@ -204,6 +207,8 @@ export const printifyProducts = sqliteTable("printify_products", {
   typeIdx: index("products_type_idx").on(table.productType),
   statusIdx: index("products_status_idx").on(table.status),
   printifyIdx: index("products_printify_idx").on(table.printifyProductId),
+  imageIdx: index("products_image_idx").on(table.generatedImageId),
+  pipelineRunIdx: index("products_run_idx").on(table.pipelineRunId),
 }));
 
 // ============================================================
@@ -285,6 +290,7 @@ export const approvalQueueEntries = sqliteTable("approval_queue_entries", {
 }, (table) => ({
   batchIdx: index("approval_batch_idx").on(table.batchNumber),
   statusIdx: index("approval_status_idx").on(table.status),
+  listingIdx: index("approval_listing_idx").on(table.listingId),
 }));
 
 // ============================================================

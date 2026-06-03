@@ -7,6 +7,7 @@ import { StatCard } from "@/components/ui/stat-card";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorState } from "@/components/ui/error-state";
 
 interface Order {
   id: string;
@@ -23,15 +24,21 @@ interface Order {
 export default function OrdersPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   async function loadData() {
     setLoading(true);
-    const res = await fetch("/api/orders");
-    if (res.ok) {
+    setError(null);
+    try {
+      const res = await fetch("/api/orders");
+      if (!res.ok) throw new Error(`Couldn't load orders (${res.status})`);
       const data = await res.json();
       setOrders(data.orders ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't load orders");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   useEffect(() => { loadData(); }, []);
@@ -49,6 +56,18 @@ export default function OrdersPage() {
           {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-28 w-full" />)}
         </div>
         <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  if (error && orders.length === 0) {
+    return (
+      <div className="space-y-6">
+        <div className="page-header">
+          <h1 className="text-2xl font-bold text-fg tracking-tight">Orders</h1>
+          <p className="text-sm text-fg-subtle mt-1">Every sale across all platforms, synced hourly.</p>
+        </div>
+        <ErrorState message={error} onRetry={loadData} retrying={loading} />
       </div>
     );
   }

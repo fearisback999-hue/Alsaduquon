@@ -7,6 +7,7 @@ import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/ca
 import { Skeleton } from "@/components/ui/skeleton";
 import { Sparkline } from "@/components/ui/sparkline";
 import { Progress } from "@/components/ui/progress";
+import { ErrorState } from "@/components/ui/error-state";
 
 interface DailyCost {
   date: string;
@@ -40,15 +41,34 @@ interface Limits { maxDailyCost: number; maxDailyListings: number }
 export default function CostsPage() {
   const [data, setData] = useState<{ dailyCosts: DailyCost[]; todayEntries: TodayEntry[]; recentTokenUsage: TokenUsage[]; limits: Limits } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   async function loadData() {
     setLoading(true);
-    const res = await fetch("/api/costs?days=30");
-    if (res.ok) setData(await res.json());
-    setLoading(false);
+    setError(null);
+    try {
+      const res = await fetch("/api/costs?days=30");
+      if (!res.ok) throw new Error(`Couldn't load cost data (${res.status})`);
+      setData(await res.json());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't load cost data");
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => { loadData(); }, []);
+
+  if (error && !data) {
+    return (
+      <div className="space-y-6">
+        <div className="page-header">
+          <h1 className="text-2xl font-bold text-fg tracking-tight">Cost Tracking</h1>
+        </div>
+        <ErrorState message={error} onRetry={loadData} retrying={loading} />
+      </div>
+    );
+  }
 
   if (loading || !data) {
     return (

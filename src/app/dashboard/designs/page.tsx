@@ -6,6 +6,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorState } from "@/components/ui/error-state";
 import { Badge } from "@/components/ui/badge";
 
 interface Design {
@@ -21,15 +22,21 @@ interface Design {
 export default function DesignsPage() {
   const [designs, setDesigns] = useState<Design[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   async function loadData() {
     setLoading(true);
-    const res = await fetch("/api/designs");
-    if (res.ok) {
+    setError(null);
+    try {
+      const res = await fetch("/api/designs");
+      if (!res.ok) throw new Error(`Couldn't load designs (${res.status})`);
       const data = await res.json();
       setDesigns(data.designs ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't load designs");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   useEffect(() => { loadData(); }, []);
@@ -43,6 +50,17 @@ export default function DesignsPage() {
             <Skeleton key={i} className="aspect-[3/4] w-full" />
           ))}
         </div>
+      </div>
+    );
+  }
+
+  if (error && designs.length === 0) {
+    return (
+      <div className="space-y-6">
+        <div className="page-header">
+          <h1 className="text-2xl font-bold text-fg tracking-tight">Designs</h1>
+        </div>
+        <ErrorState message={error} onRetry={loadData} retrying={loading} />
       </div>
     );
   }

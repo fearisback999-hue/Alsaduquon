@@ -6,6 +6,7 @@ import { StatCard } from "@/components/ui/stat-card";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorState } from "@/components/ui/error-state";
 
 interface NicheProfit {
   nicheId: string;
@@ -45,13 +46,23 @@ export default function ProfitabilityPage() {
     designStyleProfit: DesignStyleProfit[];
   } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetch("/api/analytics/profitability")
-      .then((res) => res.json())
-      .then(setData)
-      .finally(() => setLoading(false));
-  }, []);
+  async function loadData() {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/analytics/profitability");
+      if (!res.ok) throw new Error(`Couldn't load profitability data (${res.status})`);
+      setData(await res.json());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't load profitability data");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { loadData(); }, []);
 
   if (loading) {
     return (
@@ -61,6 +72,17 @@ export default function ProfitabilityPage() {
           {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-28 w-full" />)}
         </div>
         <Skeleton className="h-96 w-full" />
+      </div>
+    );
+  }
+
+  if (error && !data) {
+    return (
+      <div className="space-y-6">
+        <div className="page-header">
+          <h1 className="text-2xl font-bold text-fg tracking-tight">Profitability</h1>
+        </div>
+        <ErrorState message={error} onRetry={loadData} retrying={loading} />
       </div>
     );
   }
