@@ -21,11 +21,11 @@ export async function getStep(stepNumber: number): Promise<PipelineStep> {
     throw new Error(`Unknown pipeline step: ${stepNumber}`);
   }
 
-  const module = await loader();
+  const stepModule = await loader();
   return {
     name: STEP_NAMES[stepNumber - 1],
     number: stepNumber,
-    execute: module.default,
+    execute: stepModule.default,
   };
 }
 

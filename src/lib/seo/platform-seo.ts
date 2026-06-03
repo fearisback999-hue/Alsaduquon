@@ -4,7 +4,7 @@ import { ListingTagsSchema } from "@/lib/ai/schemas";
 import { trackTextUsage } from "@/lib/ai/token-tracker";
 import type { PlatformSEOHints } from "@/lib/platforms/types";
 
-const useClaude = () => !!process.env.ANTHROPIC_API_KEY;
+const shouldUseClaude = () => !!process.env.ANTHROPIC_API_KEY;
 
 /**
  * Real marketplace signals for the niche, collected in Step 1 (search volume,
@@ -43,7 +43,7 @@ MARKET INTELLIGENCE (real data — use it to choose what to target):
 }
 
 async function completeText(prompt: string, opts: { systemPrompt: string; maxTokens: number; temperature: number }, pipelineRunId?: string) {
-  if (useClaude()) {
+  if (shouldUseClaude()) {
     const result = await claudeCompletion(prompt, {
       systemPrompt: opts.systemPrompt,
       maxTokens: opts.maxTokens,

@@ -3,10 +3,10 @@ import { claudeCompletion } from "@/lib/ai/providers";
 import { ListingTagsSchema } from "@/lib/ai/schemas";
 import { trackTextUsage } from "@/lib/ai/token-tracker";
 
-const useClaude = () => !!process.env.ANTHROPIC_API_KEY;
+const shouldUseClaude = () => !!process.env.ANTHROPIC_API_KEY;
 
 async function completeText(prompt: string, opts: { systemPrompt: string; maxTokens: number; temperature: number }, pipelineRunId?: string) {
-  if (useClaude()) {
+  if (shouldUseClaude()) {
     const result = await claudeCompletion(prompt, {
       systemPrompt: opts.systemPrompt,
       maxTokens: opts.maxTokens,

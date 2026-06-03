@@ -21,6 +21,7 @@ export function Sparkline({
   fill = true,
   color = "rgb(var(--brand))",
 }: SparklineProps) {
+  const reactId = useId();
   if (!data.length) {
     return (
       <svg width={width} height={height} className={className} aria-hidden="true">
@@ -51,7 +52,6 @@ export function Sparkline({
   const linePath = `M ${points.join(" L ")}`;
   const areaPath = `${linePath} L ${width},${height} L 0,${height} Z`;
 
-  const reactId = useId();
   const gradientId = `spark-gradient-${reactId}`;
 
   return (

@@ -166,8 +166,8 @@ export default function CostsPage() {
         {today && (
           <Card>
             <CardHeader>
-              <CardTitle>Today's Breakdown</CardTitle>
-              <CardDescription>Where today's dollars went.</CardDescription>
+              <CardTitle>Today&apos;s Breakdown</CardTitle>
+              <CardDescription>Where today&apos;s dollars went.</CardDescription>
             </CardHeader>
             <div className="px-5 pb-5 space-y-3">
               {[
