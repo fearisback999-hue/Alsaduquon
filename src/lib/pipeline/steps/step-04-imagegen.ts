@@ -5,7 +5,7 @@ import { analyzeImage } from "@/lib/ai/client";
 import { generateImageFlux } from "@/lib/ai/providers";
 import { ImageQualitySchema, type ImageQuality } from "@/lib/ai/schemas";
 import { trackImageUsage, trackTextUsage } from "@/lib/ai/token-tracker";
-import { enforcebudget } from "@/lib/cost/guard";
+import { enforcebudget, recordCost } from "@/lib/cost/guard";
 import { uploadImageBuffer } from "@/lib/images/storage";
 import { renderTextOnBackground, pickTextColor, extractDisplayText } from "@/lib/images/text-renderer";
 import { log } from "@/lib/logger";
@@ -216,7 +216,20 @@ export default async function execute(context: PipelineContext): Promise<StepRes
       // the higher-scoring one. Doubles attempt-1 cost but dramatically
       // improves quality and often avoids retries (which cost the same).
       const candidateCount = attempt === 1 ? 2 : 1;
-      await enforcebudget((imageCost + GPT4O_VISION_COST_ESTIMATE) * candidateCount);
+      const estimatedStepCost = (imageCost + GPT4O_VISION_COST_ESTIMATE) * candidateCount;
+      await enforcebudget(estimatedStepCost);
+
+      // Pre-record costs BEFORE external API calls so a crash between
+      // spend and recording can't drift the budget ledger.
+      const imageCategory = useFlux ? "replicate_image" : "openai_image";
+      for (let ci = 0; ci < candidateCount; ci++) {
+        await recordCost(imageCategory as Parameters<typeof recordCost>[0], imageCost, {
+          description: `Image generation pre-record (${generatorName}, attempt ${attempt})`,
+        });
+        await recordCost("openai_text", GPT4O_VISION_COST_ESTIMATE, {
+          description: `Quality check pre-record (attempt ${attempt})`,
+        });
+      }
 
       try {
         const candidates: RawCandidate[] = await Promise.all(
@@ -232,6 +245,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
             quality: useFlux ? "flux" : "hd",
             durationMs: c.durationMs,
             pipelineRunId: context.pipelineRunId,
+            costPreRecorded: true,
           });
           totalCost += imageCost;
         }
@@ -260,6 +274,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
             inputTokens: score.inputTokens,
             outputTokens: score.outputTokens,
             pipelineRunId: context.pipelineRunId,
+            costPreRecorded: true,
           });
           totalCost += GPT4O_VISION_COST_ESTIMATE;
         }

@@ -11,6 +11,7 @@ export async function trackTextUsage(params: {
   durationMs?: number;
   pipelineRunId?: string;
   provider?: string;
+  costPreRecorded?: boolean;
 }): Promise<number> {
   const inputTokens = Math.max(0, params.inputTokens);
   const outputTokens = Math.max(0, params.outputTokens);
@@ -28,11 +29,13 @@ export async function trackTextUsage(params: {
     pipelineRunId: params.pipelineRunId,
   });
 
-  const costCategory = provider === "anthropic" ? "anthropic_text" : "openai_text";
-  await recordCost(costCategory, cost, {
-    modelName: params.model,
-    description: `${params.operation}: ${inputTokens}in/${outputTokens}out tokens`,
-  });
+  if (!params.costPreRecorded) {
+    const costCategory = provider === "anthropic" ? "anthropic_text" : "openai_text";
+    await recordCost(costCategory, cost, {
+      modelName: params.model,
+      description: `${params.operation}: ${inputTokens}in/${outputTokens}out tokens`,
+    });
+  }
 
   return cost;
 }
@@ -44,6 +47,7 @@ export async function trackImageUsage(params: {
   durationMs?: number;
   pipelineRunId?: string;
   referenceId?: string;
+  costPreRecorded?: boolean;
 }): Promise<number> {
   const cost = Math.max(0, estimateImageCost(params.quality));
 
@@ -58,13 +62,15 @@ export async function trackImageUsage(params: {
     pipelineRunId: params.pipelineRunId,
   });
 
-  const costCategory = params.quality === "flux" ? "replicate_image" : "openai_image";
-  await recordCost(costCategory, cost, {
-    modelName: params.model,
-    description: `Image generation (${params.quality})`,
-    referenceId: params.referenceId,
-    referenceType: "generated_image",
-  });
+  if (!params.costPreRecorded) {
+    const costCategory = params.quality === "flux" ? "replicate_image" : "openai_image";
+    await recordCost(costCategory, cost, {
+      modelName: params.model,
+      description: `Image generation (${params.quality})`,
+      referenceId: params.referenceId,
+      referenceType: "generated_image",
+    });
+  }
 
   return cost;
 }

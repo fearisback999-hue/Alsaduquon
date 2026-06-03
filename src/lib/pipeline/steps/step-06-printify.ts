@@ -132,24 +132,30 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
       const isCompanion = companionEnabled && productType === companionType && !enabledTypes.includes(productType);
 
-      // Idempotency: check if product already exists for this image + type
+      // Idempotency: check if product already exists for this image + type.
+      // A "creating" row with no printifyProductId is a stale reservation from
+      // a prior crash — safe to reclaim. Any other match means the product was
+      // already created or failed intentionally.
       const existing = await context.db
         .select()
         .from(printifyProducts)
         .where(eq(printifyProducts.generatedImageId, image.id))
         .all();
 
-      if (existing.some((p) => p.productType === productType)) continue;
+      const existingForType = existing.find((p) => p.productType === productType);
+      if (existingForType) {
+        if (existingForType.status === "creating" && !existingForType.printifyProductId) {
+          await context.db.delete(printifyProducts).where(eq(printifyProducts.id, existingForType.id));
+        } else {
+          continue;
+        }
+      }
 
       try {
-        // Get available variants for this blueprint
         const variantData = await printify.getVariants(config.blueprintId, config.printProviderId);
         const baseCost = getTypicalCost(productType);
         const targetMargin = getTargetMargin(productType, niche?.competitionLevel);
 
-        // Companion products skip dynamic pricing — they're priced flat at
-        // the configured cheap retail price ($5.99 by default) to act as
-        // entry-point listings. Main products get full dynamic pricing.
         const pricing = isCompanion
           ? {
               retailPrice: companionRetailPrice,
@@ -170,10 +176,6 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
         const variantsRaw = variantData.variants.slice(0, 20);
 
-        // Compute tease (hook) price + pick the best variant to discount.
-        // selectHookVariantIndex returns null if the product has only one
-        // variant (e.g. some posters), in which case tease is a no-op.
-        // Companions are already cheap — no need to discount them further.
         const hookIndex = (teaseEnabled && !isCompanion) ? selectHookVariantIndex(variantsRaw) : null;
         const tease = teaseEnabled && !isCompanion && hookIndex != null
           ? calculateTeasePrice(pricing.retailPrice, baseCost, teaseDiscountPct, {
@@ -206,6 +208,21 @@ export default async function execute(context: PipelineContext): Promise<StepRes
           log("info", `[Step 06] Companion bait: created ${displayName} for "${concept?.title ?? "design"}" at $${companionRetailPrice} (cost $${baseCost}, margin $${(companionRetailPrice - baseCost).toFixed(2)})`);
         }
 
+        // Reserve the DB row BEFORE calling external API. If we crash between
+        // Printify create and the update below, the "creating" row prevents a
+        // duplicate on retry (the idempotency check above reclaims it).
+        const [reservation] = await context.db.insert(printifyProducts).values({
+          designConceptId: image.designConceptId,
+          generatedImageId: image.id,
+          productType,
+          title,
+          description: concept?.description,
+          baseCost,
+          retailPrice: pricing.retailPrice,
+          status: "creating",
+          pipelineRunId: context.pipelineRunId,
+        }).returning();
+
         const product = await printify.createProduct(shopId, {
           title,
           description: concept?.description ?? "",
@@ -227,39 +244,47 @@ export default async function execute(context: PipelineContext): Promise<StepRes
           }],
         });
 
-        const [dbProduct] = await context.db.insert(printifyProducts).values({
-          designConceptId: image.designConceptId,
-          generatedImageId: image.id,
+        await context.db.update(printifyProducts).set({
           printifyProductId: product.id,
           printifyShopId: shopId,
-          productType,
           blueprintId: config.blueprintId,
           printProviderId: config.printProviderId,
-          title,
-          description: concept?.description,
-          baseCost,
-          retailPrice: pricing.retailPrice,
           variants: JSON.stringify(variants),
           status: "created",
           printifyData: JSON.stringify(product),
-          pipelineRunId: context.pipelineRunId,
-        }).returning();
+          updatedAt: new Date().toISOString(),
+        }).where(eq(printifyProducts.id, reservation.id));
 
-        context.createdProductIds.push(dbProduct.id);
+        context.createdProductIds.push(reservation.id);
         created++;
       } catch (error) {
         log("error", `[Step 06] Product creation failed for ${productType} (image ${image.id})`, {
           error: error instanceof Error ? error.message : String(error),
         });
         failed++;
-        await context.db.insert(printifyProducts).values({
-          designConceptId: image.designConceptId,
-          generatedImageId: image.id,
-          productType,
-          title: concept?.title ?? "Failed Product",
-          status: "failed",
-          pipelineRunId: context.pipelineRunId,
-        });
+        // Mark the pre-inserted reservation as failed if it exists
+        const creatingRows = await context.db
+          .select({ id: printifyProducts.id, productType: printifyProducts.productType, status: printifyProducts.status })
+          .from(printifyProducts)
+          .where(eq(printifyProducts.generatedImageId, image.id))
+          .all();
+        const reservationRow = creatingRows.find((r) => r.productType === productType && r.status === "creating");
+
+        if (reservationRow) {
+          await context.db.update(printifyProducts).set({
+            status: "failed",
+            updatedAt: new Date().toISOString(),
+          }).where(eq(printifyProducts.id, reservationRow.id));
+        } else {
+          await context.db.insert(printifyProducts).values({
+            designConceptId: image.designConceptId,
+            generatedImageId: image.id,
+            productType,
+            title: concept?.title ?? "Failed Product",
+            status: "failed",
+            pipelineRunId: context.pipelineRunId,
+          });
+        }
       }
     }
   }

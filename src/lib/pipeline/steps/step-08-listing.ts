@@ -109,14 +109,24 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     const listingVariants = await buildListingVariants(primaryProduct);
 
     const existingListings = await context.db
-      .select({ platform: listings.platform })
+      .select({ platform: listings.platform, status: listings.status, externalListingId: listings.externalListingId })
       .from(listings)
       .where(eq(listings.printifyProductId, primaryProduct.id))
       .all();
-    const existingPlatforms = new Set(existingListings.map((l) => l.platform));
 
     for (const platform of platforms) {
-      if (existingPlatforms.has(platform.id)) continue;
+      const existingForPlatform = existingListings.find((l) => l.platform === platform.id);
+      if (existingForPlatform) {
+        // Stale reservation from a crash — no external ID means the API call
+        // never completed. Delete and retry.
+        if (existingForPlatform.status === "draft" && !existingForPlatform.externalListingId) {
+          await context.db.delete(listings).where(
+            eq(listings.printifyProductId, primaryProduct.id),
+          );
+        } else {
+          continue;
+        }
+      }
 
       await enforcebudget(0.05);
 
@@ -184,6 +194,39 @@ export default async function execute(context: PipelineContext): Promise<StepRes
       const listingFee = platform.getListingFee();
       const feeCategory = `${platform.id}_fee` as Parameters<typeof recordCost>[0];
 
+      // Pre-record listing fee BEFORE the external call so a crash can't
+      // silently eat the cost from the budget ledger.
+      if (listingFee > 0) {
+        await recordCost(feeCategory, listingFee, {
+          description: `${platform.name} listing fee (pre-recorded)`,
+          referenceType: `${platform.id}_listing`,
+        });
+      }
+
+      // Reserve the DB row BEFORE calling the external API. If we crash
+      // between the platform create and the update below, the "draft" row
+      // with no externalListingId prevents a duplicate on retry.
+      const [reservation] = await context.db.insert(listings).values({
+        platform: platform.id,
+        printifyProductId: primaryProduct.id,
+        title,
+        titleVariants: orderedTitleVariants.length > 1 ? JSON.stringify(orderedTitleVariants) : null,
+        titleVariantIndex: 0,
+        description,
+        descriptionVariants,
+        descriptionVariantIndex: 0,
+        tags: JSON.stringify(tags),
+        tagVariants,
+        tagVariantIndex: 0,
+        seoScore,
+        basePrice: primaryProduct.baseCost ?? 15,
+        marginPercent: targetMargin,
+        finalPrice: retailPrice,
+        status: "draft",
+        moderationResult: JSON.stringify(modResult),
+        pipelineRunId: context.pipelineRunId,
+      }).returning();
+
       try {
         const result = await platform.createDraftListing({
           title,
@@ -200,52 +243,29 @@ export default async function execute(context: PipelineContext): Promise<StepRes
           await platform.uploadImages(result.externalId, imageUrls);
         }
 
-        // Add size/color variations so buyers can pick (apparel without a size
-        // selector barely converts). Fail-safe: the listing stays single-SKU
-        // if the platform doesn't support it or the call fails.
         if (listingVariants.length > 1 && platform.syncVariants) {
           await platform.syncVariants(result.externalId, primaryProduct.productType, listingVariants);
         }
 
-        if (listingFee > 0) {
-          await recordCost(feeCategory, listingFee, {
-            description: `${platform.name} listing fee`,
-            referenceId: result.externalId,
-            referenceType: `${platform.id}_listing`,
-          });
-        }
-
-        const [listing] = await context.db.insert(listings).values({
-          platform: platform.id,
-          printifyProductId: primaryProduct.id,
+        await context.db.update(listings).set({
           externalListingId: result.externalId,
-          title,
-          titleVariants: orderedTitleVariants.length > 1 ? JSON.stringify(orderedTitleVariants) : null,
-          titleVariantIndex: 0,
-          description,
-          descriptionVariants,
-          descriptionVariantIndex: 0,
-          tags: JSON.stringify(tags),
-          tagVariants,
-          tagVariantIndex: 0,
-          seoScore,
-          basePrice: primaryProduct.baseCost ?? 15,
-          marginPercent: targetMargin,
-          finalPrice: retailPrice,
           externalState: result.state,
           externalUrl: result.url,
           status: "pending_approval",
-          moderationResult: JSON.stringify(modResult),
-          pipelineRunId: context.pipelineRunId,
-        }).returning();
+          updatedAt: new Date().toISOString(),
+        }).where(eq(listings.id, reservation.id));
 
-        context.draftListingIds.push(listing.id);
+        context.draftListingIds.push(reservation.id);
         created++;
         perPlatform[platform.id] = (perPlatform[platform.id] ?? 0) + 1;
       } catch (error) {
         log("error", `[Step 08] Draft listing creation failed on ${platform.id} for concept ${conceptId}`, {
           error: error instanceof Error ? error.message : String(error),
         });
+        await context.db.update(listings).set({
+          status: "draft",
+          updatedAt: new Date().toISOString(),
+        }).where(eq(listings.id, reservation.id));
         failed++;
       }
     }

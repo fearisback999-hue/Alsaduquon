@@ -1,14 +1,36 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
+import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Zap, Lock, ArrowRight, AlertCircle, ShieldAlert, Eye, EyeOff } from "lucide-react";
-import { SplineScene } from "@/components/ui/splite";
 import { Spotlight } from "@/components/ui/spotlight";
-import { CanvasRevealEffect } from "@/components/ui/canvas-reveal-effect";
-import { HeroGeometric } from "@/components/ui/shape-landing-hero";
+
+const CanvasRevealEffect = dynamic(
+  () => import("@/components/ui/canvas-reveal-effect").then((m) => m.CanvasRevealEffect),
+  { ssr: false },
+);
+
+const HeroGeometric = dynamic(
+  () => import("@/components/ui/shape-landing-hero").then((m) => m.HeroGeometric),
+  { ssr: false },
+);
+
+const SplineScene = dynamic(
+  () => import("@/components/ui/splite").then((m) => m.SplineScene),
+  { ssr: false, loading: () => <SplineFallback /> },
+);
+
+function SplineFallback() {
+  return (
+    <div className="w-full h-full flex items-center justify-center relative overflow-hidden">
+      <div className="absolute w-72 h-72 rounded-full bg-gradient-to-br from-indigo-500/30 via-purple-500/20 to-transparent blur-3xl animate-float" />
+      <div className="absolute w-48 h-48 rounded-full bg-gradient-to-tr from-purple-600/20 to-indigo-400/10 blur-2xl animate-float" style={{ animationDelay: "1.2s" }} />
+    </div>
+  );
+}
 
 export default function LoginPage() {
   const [password, setPassword] = useState("");

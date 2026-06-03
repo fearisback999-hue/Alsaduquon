@@ -6,6 +6,7 @@ import { getStep, TOTAL_STEPS } from "./registry";
 import { createStepLogger, log } from "@/lib/logger";
 import { checkBudget } from "@/lib/cost/guard";
 import { BudgetExceededError, PipelineStepError } from "@/lib/errors";
+import { sendPipelineNotification } from "@/lib/notifications";
 import { STEP_NAMES } from "@/lib/types";
 
 interface RunOptions {
@@ -66,6 +67,12 @@ export async function runPipeline(options?: RunOptions): Promise<{ runId: string
           currentStepName: stepName,
           error: error.message,
         }).where(eq(pipelineRuns.id, runId));
+        await sendPipelineNotification({
+          event: "budget_exceeded",
+          runId,
+          message: `Pipeline paused at step ${stepNum} (${stepName}): daily budget exceeded`,
+          data: { step: stepNum, stepName },
+        });
         return { runId, status: "paused", completedSteps };
       }
       throw error;
@@ -103,10 +110,16 @@ export async function runPipeline(options?: RunOptions): Promise<{ runId: string
         log("info", "Pipeline paused for approval", { runId });
         await db.update(pipelineRuns).set({
           status: "paused",
-          currentStep: 10, // Next step to resume at
+          currentStep: 10,
           currentStepName: "publish",
           totalCost,
         }).where(eq(pipelineRuns.id, runId));
+        await sendPipelineNotification({
+          event: "pipeline_paused",
+          runId,
+          message: `${result.data.queued} listing(s) need manual approval (${result.data.autoApproved} auto-approved). Review at /dashboard/approvals`,
+          data: { queued: result.data.queued, autoApproved: result.data.autoApproved, batches: result.data.batches },
+        });
         return { runId, status: "paused", completedSteps };
       }
     } catch (error) {
@@ -123,6 +136,13 @@ export async function runPipeline(options?: RunOptions): Promise<{ runId: string
         totalCost,
       }).where(eq(pipelineRuns.id, runId));
 
+      await sendPipelineNotification({
+        event: "pipeline_failed",
+        runId,
+        message: `Pipeline failed at step ${stepNum} (${stepName}): ${message}`,
+        data: { step: stepNum, stepName, completedSteps },
+      });
+
       return { runId, status: "failed", completedSteps };
     }
   }
@@ -137,5 +157,11 @@ export async function runPipeline(options?: RunOptions): Promise<{ runId: string
   }).where(eq(pipelineRuns.id, runId));
 
   log("info", "Pipeline completed", { runId, completedSteps, totalCost });
+  await sendPipelineNotification({
+    event: "pipeline_completed",
+    runId,
+    message: `Pipeline completed: ${completedSteps} steps, $${totalCost.toFixed(2)} spent`,
+    data: { completedSteps, totalCost },
+  });
   return { runId, status: "completed", completedSteps };
 }
