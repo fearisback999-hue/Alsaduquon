@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { requireSessionApi } from "@/lib/auth/require-session";
 import { validateSetting, SETTING_VALIDATORS } from "@/lib/settings/validators";
+import { apiRateLimit } from "@/lib/auth/api-rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +25,12 @@ export async function GET() {
 export async function PUT(request: NextRequest) {
   const denied = await requireSessionApi();
   if (denied) return denied;
+
+  const { allowed } = apiRateLimit("settings-update", 30, 60_000);
+  if (!allowed) {
+    return NextResponse.json({ error: "Too many updates. Slow down." }, { status: 429 });
+  }
+
   const body = await request.json().catch(() => null);
   const parsed = updateSettingSchema.safeParse(body);
 

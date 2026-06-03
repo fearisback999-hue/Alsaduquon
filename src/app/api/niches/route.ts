@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { niches } from "@/lib/db/schema";
 import { desc, eq, sql } from "drizzle-orm";
+import { z } from "zod";
 import { requireSessionApi } from "@/lib/auth/require-session";
+
+const createNicheSchema = z.object({
+  name: z.string().min(2).max(120),
+  category: z.string().max(60).optional(),
+});
 
 export const dynamic = "force-dynamic";
 
@@ -39,19 +45,17 @@ export async function POST(request: NextRequest) {
   const denied = await requireSessionApi();
   if (denied) return denied;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  const body = await request.json().catch(() => null);
+  const parsed = createNicheSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid request", details: parsed.error.issues.map((i) => i.message) },
+      { status: 400 },
+    );
   }
 
-  const { name, category } = body as { name?: string; category?: string };
-  if (!name || typeof name !== "string" || name.trim().length < 2) {
-    return NextResponse.json({ error: "Name is required (min 2 characters)" }, { status: 400 });
-  }
-
-  const normalizedName = name.toLowerCase().trim().slice(0, 120);
+  const normalizedName = parsed.data.name.toLowerCase().trim();
+  const category = parsed.data.category;
 
   const existing = await db
     .select({ id: niches.id })

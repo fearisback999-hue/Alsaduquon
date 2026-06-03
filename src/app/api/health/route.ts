@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { settings, pipelineRuns, listings, dailyCosts } from "@/lib/db/schema";
 import { desc, eq } from "drizzle-orm";
+import { validateEnv } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
 
@@ -75,7 +76,13 @@ export async function GET() {
     checks.approvalQueue = { status: "error" };
   }
 
-  // Required external integrations
+  // Env validation — production requires full integration keys, dev only core
+  const envResult = validateEnv();
+  checks.env = envResult.valid
+    ? { status: "ok" }
+    : { status: "error", detail: `missing: ${envResult.missing.join(", ")}` };
+
+  // Per-service detail for quick triage
   checks.openai = envCheck("OPENAI_API_KEY");
   checks.printify = envCheck("PRINTIFY_API_TOKEN", "PRINTIFY_SHOP_ID");
   checks.etsy = envCheck("ETSY_CLIENT_ID", "ETSY_CLIENT_SECRET", "ETSY_REFRESH_TOKEN");

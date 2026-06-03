@@ -3,6 +3,7 @@ import { runPipeline } from "@/lib/pipeline/engine";
 import { acquireLock } from "@/lib/pipeline/concurrency";
 import { z } from "zod";
 import { requireSessionApi } from "@/lib/auth/require-session";
+import { apiRateLimit } from "@/lib/auth/api-rate-limit";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -15,6 +16,15 @@ const triggerSchema = z.object({
 export async function POST(request: NextRequest) {
   const denied = await requireSessionApi();
   if (denied) return denied;
+
+  const { allowed, retryAfterMs } = apiRateLimit("pipeline-trigger", 3, 60_000);
+  if (!allowed) {
+    return NextResponse.json(
+      { error: "Too many pipeline triggers. Try again later." },
+      { status: 429, headers: { "Retry-After": String(Math.ceil(retryAfterMs / 1000)) } },
+    );
+  }
+
   const body = await request.json().catch(() => ({}));
   const parsed = triggerSchema.safeParse(body);
 

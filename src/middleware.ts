@@ -13,12 +13,15 @@ const CSP_DIRECTIVES = [
   "form-action 'self'",
 ].join("; ");
 
-function addSecurityHeaders(response: NextResponse): NextResponse {
+function addSecurityHeaders(response: NextResponse, isApi = false): NextResponse {
   response.headers.set("X-Frame-Options", "DENY");
   response.headers.set("X-Content-Type-Options", "nosniff");
   response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   response.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   response.headers.set("Content-Security-Policy", CSP_DIRECTIVES);
+  if (isApi) {
+    response.headers.set("Cache-Control", "private, no-store, no-cache, must-revalidate");
+  }
   if (process.env.NODE_ENV === "production") {
     response.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   }
@@ -35,14 +38,9 @@ function looksLikeValidToken(token: string | undefined): boolean {
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const isApi = pathname.startsWith("/api/");
 
   if (pathname.startsWith("/api/cron/")) {
-    // Authenticate via the secret bearer token only. Vercel Cron sends
-    // `Authorization: Bearer $CRON_SECRET` automatically when CRON_SECRET is
-    // set in the project env, so we do NOT trust the `x-vercel-cron` header —
-    // it is client-supplied and trivially spoofable. In production the secret
-    // is REQUIRED (fail closed); in dev we allow when it's unset for local
-    // testing.
     const isProd = process.env.NODE_ENV === "production";
     const cronSecret = process.env.CRON_SECRET;
     const auth = request.headers.get("authorization");
@@ -52,25 +50,27 @@ export function middleware(request: NextRequest) {
     if (!authorized) {
       return addSecurityHeaders(
         NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+        true,
       );
     }
-    return addSecurityHeaders(NextResponse.next());
+    return addSecurityHeaders(NextResponse.next(), true);
   }
 
   if (pathname === "/api/health") {
-    return addSecurityHeaders(NextResponse.next());
+    return addSecurityHeaders(NextResponse.next(), true);
   }
 
   if (pathname === "/login" || pathname === "/api/auth/login" || pathname === "/api/auth/logout") {
-    return addSecurityHeaders(NextResponse.next());
+    return addSecurityHeaders(NextResponse.next(), isApi);
   }
 
-  if (pathname.startsWith("/dashboard") || pathname.startsWith("/api/")) {
+  if (pathname.startsWith("/dashboard") || isApi) {
     const authCookie = request.cookies.get("neo-pod-auth")?.value;
     if (!looksLikeValidToken(authCookie)) {
-      if (pathname.startsWith("/api/")) {
+      if (isApi) {
         return addSecurityHeaders(
           NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+          true,
         );
       }
       return addSecurityHeaders(
@@ -79,7 +79,7 @@ export function middleware(request: NextRequest) {
     }
   }
 
-  return addSecurityHeaders(NextResponse.next());
+  return addSecurityHeaders(NextResponse.next(), isApi);
 }
 
 export const config = {
