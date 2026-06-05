@@ -92,6 +92,16 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     );
   }
 
+  // When AI expansion AND micro-drilling both failed, we only have broad
+  // evergreen seeds. These are meant as INPUT to AI expansion, not as
+  // standalone niche candidates — Etsy rightfully filters them as
+  // oversaturated. Skip the Etsy gate entirely so the seeds can at least
+  // reach Step 2's AI scoring, and warn loudly.
+  const aiProducedNothing = expanded.length === 0 && microDrillResults.length === 0;
+  if (aiProducedNothing && trendResults.length > 0) {
+    log("warn", "[Step 01] AI expansion AND micro-drilling both produced 0 results — Etsy viability gate will be skipped so seed niches can reach AI scoring in Step 2. Check your OPENAI_API_KEY / ANTHROPIC_API_KEY.");
+  }
+
   const allCandidates = [...trendResults, ...expanded, ...microDrillResults];
 
   // ---- PRE-RANK + CAP ----
@@ -124,6 +134,10 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   const etsyConfigured = !!process.env.ETSY_CLIENT_ID;
   if (!etsyConfigured) {
     log("warn", "[Step 01] Etsy not connected — skipping marketplace viability gate (niches will be scored by AI in Step 2)");
+  } else {
+    const scores: string[] = [];
+    etsyValidation.forEach((v) => { scores.push(`${v.keyword.slice(0, 30)}=${v.viabilityScore}(${v.dataAvailable ? "live" : "fallback"})`); });
+    log("info", `[Step 01] Etsy viability scores (threshold ${MIN_ETSY_VIABILITY_SCORE}): ${scores.join(", ")}`);
   }
 
   let etsyFiltered = 0;
@@ -169,7 +183,8 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     }
 
     // Etsy viability gate — reject niches with no real marketplace demand.
-    // Skipped entirely when Etsy isn't connected (see note above).
+    // Skipped when: (a) Etsy isn't connected, or (b) AI expansion failed
+    // and we only have broad seeds that need Step 2 AI scoring.
     //
     // CRITICAL: only filter when `dataAvailable` is true. A failed Etsy API
     // call (bad/expired credentials, rate limit, outage) returns viability 0,
@@ -180,7 +195,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     if (etsyConfigured && etsyData && !etsyData.dataAvailable) {
       log("warn", `[Step 01] Etsy lookup unavailable for "${trend.keyword}" — letting it through (will be AI-scored in Step 2)`);
     }
-    if (etsyConfigured && etsyData && etsyData.dataAvailable && etsyData.viabilityScore < MIN_ETSY_VIABILITY_SCORE) {
+    if (etsyConfigured && !aiProducedNothing && etsyData && etsyData.dataAvailable && etsyData.viabilityScore < MIN_ETSY_VIABILITY_SCORE) {
       etsyFiltered++;
       log("info", `[Step 01] Etsy-filtered "${trend.keyword}" — viability ${etsyData.viabilityScore}/100 (${etsyData.activeListingCount} listings, avg ${etsyData.avgFavorites} favorites, ${etsyData.demandSignal} demand, ${etsyData.competitionLevel} competition)`);
       continue;

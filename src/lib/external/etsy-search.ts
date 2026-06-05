@@ -69,9 +69,10 @@ export async function validateNicheOnEtsy(keyword: string): Promise<EtsySearchRe
     const results = ((data as { results?: EtsyListingHit[] }).results ?? []) as EtsyListingHit[];
 
     if (results.length === 0) {
-      // Real response, just no listings for this keyword — that's a genuine
-      // low-demand signal, so the gate may legitimately filter it.
-      return { ...defaultResult(keyword), activeListingCount: count, demandSignal: "none", competitionLevel: "low", viabilityScore: 15, dataAvailable: true };
+      // Zero listings = untapped niche, not dead demand. Score above the
+      // viability gate so the pipeline can test these with AI scoring in
+      // Step 2 rather than killing them here.
+      return { ...defaultResult(keyword), activeListingCount: count, demandSignal: "weak", competitionLevel: "low", viabilityScore: 35, dataAvailable: true };
     }
 
     const prices = results.map((r) => r.price.amount / r.price.divisor);

@@ -179,8 +179,10 @@ Return your expanded niches as JSON.`;
       source: "ai_expansion" as const,
     }));
   } catch (error) {
-    log("error", "[Step 01] AI niche expansion failed", {
-      error: error instanceof Error ? error.message : String(error),
+    const msg = error instanceof Error ? error.message : String(error);
+    log("error", `[Step 01] AI niche expansion failed — 0 expansions will be produced. Error: ${msg}`, {
+      error: msg,
+      stack: error instanceof Error ? error.stack : undefined,
     });
     return [];
   }
