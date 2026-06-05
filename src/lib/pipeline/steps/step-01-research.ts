@@ -11,7 +11,7 @@ import { log } from "@/lib/logger";
 const POD_PRODUCT_WORDS = /\b(t-?shirts?|tees?|shirts?|hoodies?|mugs?|cups?|sweatshirts?|tank\s*tops?|posters?|stickers?|prints?|designs?)\b/g;
 const TRAILING_S = /s\b/g;
 
-const MIN_ETSY_VIABILITY_SCORE = 25;
+const MIN_ETSY_VIABILITY_SCORE = 15;
 
 function normalizeForDedup(keyword: string): string {
   return keyword
@@ -124,6 +124,10 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   const etsyConfigured = !!process.env.ETSY_CLIENT_ID;
   if (!etsyConfigured) {
     log("warn", "[Step 01] Etsy not connected — skipping marketplace viability gate (niches will be scored by AI in Step 2)");
+  } else {
+    const scores: string[] = [];
+    etsyValidation.forEach((v) => { scores.push(`${v.keyword.slice(0, 30)}=${v.viabilityScore}(${v.dataAvailable ? "live" : "fallback"})`); });
+    log("info", `[Step 01] Etsy viability scores (threshold ${MIN_ETSY_VIABILITY_SCORE}): ${scores.join(", ")}`);
   }
 
   let etsyFiltered = 0;
