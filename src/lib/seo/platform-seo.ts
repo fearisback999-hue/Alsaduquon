@@ -192,7 +192,9 @@ Return ONLY the description text.`;
     temperature: 0.7,
   }, pipelineRunId);
 
-  return result.content.trim();
+  const description = result.content.trim();
+  const disclosure = "\n\n---\nDesign created with AI assistance.";
+  return description + disclosure;
 }
 
 export async function generatePlatformTags(

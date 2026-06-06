@@ -48,8 +48,9 @@ export async function generateListingTitle(
 Design concept: "${conceptTitle}"
 
 Rules:
-- Maximum ${maxLength} characters
-- Front-load the most important keywords
+- Maximum ${maxLength} characters total
+- CRITICAL: The first 70 characters must contain your primary keyword + product type — this is all mobile buyers see (70%+ of Etsy purchases)
+- Use the remaining characters (71-${maxLength}) for secondary keywords that help search indexing
 - Include the product type naturally
 - Use relevant long-tail keywords
 - No ALL CAPS, no special characters
@@ -94,7 +95,9 @@ Return ONLY the description text.`;
     temperature: 0.7,
   }, pipelineRunId);
 
-  return result.content.trim();
+  const description = result.content.trim();
+  const disclosure = "\n\n---\nDesign created with AI assistance.";
+  return description + disclosure;
 }
 
 export async function generateListingTags(
@@ -140,8 +143,8 @@ Return JSON: {"tags": ["tag1", "tag2", ...]}`;
 export function calculateSEOScore(title: string, description: string, tags: string[]): number {
   let score = 0;
 
-  if (title.length >= 100 && title.length <= 140) score += 25;
-  else if (title.length >= 60) score += 15;
+  if (title.length >= 60 && title.length <= 100) score += 25;
+  else if (title.length >= 40 && title.length <= 140) score += 15;
   else score += 5;
 
   const wordCount = description.split(/\s+/).length;
