@@ -1,17 +1,13 @@
 import OpenAI from "openai";
 import { zodResponseFormat } from "openai/helpers/zod";
 import type { z } from "zod";
+import { log } from "@/lib/logger";
 
 const globalForOpenAI = globalThis as unknown as { openai: OpenAI | undefined };
 
 export function getOpenAI(): OpenAI {
   if (globalForOpenAI.openai) return globalForOpenAI.openai;
 
-  // An OpenAI call with no timeout can hang indefinitely if the connection
-  // stalls, freezing the pipeline step that's holding the run lock until the
-  // 30-min staleness reaper kicks in. Bound every request: 120s is generous
-  // even for DALL-E 3 HD (typically <60s), and the SDK retries transient
-  // 429/5xx/network errors with exponential backoff before giving up.
   const client = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
     timeout: 120_000,
@@ -23,6 +19,17 @@ export function getOpenAI(): OpenAI {
   }
 
   return client;
+}
+
+function isQuotaError(error: unknown): boolean {
+  if (error instanceof OpenAI.APIError) {
+    return error.status === 429 && /quota|billing|exceeded/i.test(error.message);
+  }
+  return false;
+}
+
+function hasClaudeFallback(): boolean {
+  return !!process.env.ANTHROPIC_API_KEY;
 }
 
 export class StructuredOutputError extends Error {
@@ -62,10 +69,35 @@ export async function chatCompletion<T = unknown>(
   prompt: string,
   options?: ChatCompletionOptions<T>,
 ): Promise<ChatCompletionResult<T>> {
+  try {
+    return await openaiChatCompletion(prompt, options);
+  } catch (error) {
+    if (isQuotaError(error) && hasClaudeFallback()) {
+      log("warn", `[AI] OpenAI quota exceeded — falling back to Claude for text completion`);
+      const { claudeCompletion } = await import("@/lib/ai/providers");
+      const result = await claudeCompletion(prompt, {
+        systemPrompt: options?.systemPrompt,
+        schema: options?.schema,
+        maxTokens: options?.maxTokens,
+        temperature: options?.temperature,
+      });
+      return {
+        content: result.content,
+        parsed: result.parsed,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+        model: result.model,
+      };
+    }
+    throw error;
+  }
+}
+
+async function openaiChatCompletion<T = unknown>(
+  prompt: string,
+  options?: ChatCompletionOptions<T>,
+): Promise<ChatCompletionResult<T>> {
   const openai = getOpenAI();
-  // gpt-4o is GA on every paid OpenAI account and supports structured
-  // outputs. (gpt-4.1 is also valid but not available on every tier, which
-  // can make calls silently fail — see research-step "0 expansions" bug.)
   const model = options?.model ?? "gpt-4o";
 
   const messages: OpenAI.ChatCompletionMessageParam[] = [];
@@ -129,6 +161,35 @@ interface AnalyzeImageOptions<T> {
 }
 
 export async function analyzeImage<T = unknown>(
+  imageUrl: string,
+  prompt: string,
+  options?: AnalyzeImageOptions<T>,
+): Promise<ChatCompletionResult<T>> {
+  try {
+    return await openaiAnalyzeImage(imageUrl, prompt, options);
+  } catch (error) {
+    if (isQuotaError(error) && hasClaudeFallback()) {
+      log("warn", `[AI] OpenAI quota exceeded — falling back to Claude for image analysis`);
+      const { claudeAnalyzeImage: claudeVision } = await import("@/lib/ai/providers");
+      const result = await claudeVision(imageUrl, prompt, {
+        systemPrompt: options?.systemPrompt,
+        schema: options?.schema,
+        maxTokens: options?.maxTokens,
+        temperature: options?.temperature,
+      });
+      return {
+        content: result.content,
+        parsed: result.parsed,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+        model: result.model,
+      };
+    }
+    throw error;
+  }
+}
+
+async function openaiAnalyzeImage<T = unknown>(
   imageUrl: string,
   prompt: string,
   options?: AnalyzeImageOptions<T>,
