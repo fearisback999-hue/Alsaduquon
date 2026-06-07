@@ -1,5 +1,6 @@
 import type { PipelineContext, StepResult } from "../context";
 import { niches } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { getAllTrends, getFlyingResearchVolume, expandNichesWithAI, type TrendResult } from "@/lib/external/trend-apis";
 import { batchValidateNiches } from "@/lib/external/etsy-search";
 import { enforcebudget } from "@/lib/cost/guard";
@@ -142,10 +143,28 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
   let etsyFiltered = 0;
 
-  // Load existing niche names for dedup (exact + fuzzy)
-  const existingNiches = await context.db.select({ name: niches.name }).from(niches).all();
-  const existingExact = new Set(existingNiches.map((n) => n.name));
-  const existingNormalized = new Set(existingNiches.map((n) => normalizeForDedup(n.name)));
+  // Load existing niche names for dedup (exact + fuzzy).
+  // Rejected niches older than the cooldown period are EXCLUDED from the dedup
+  // set so they can be re-evaluated — they failed scoring before but may pass
+  // now with different AI assessment or updated data.
+  const REJECTED_COOLDOWN_DAYS = 3;
+  const cooldownCutoff = new Date(Date.now() - REJECTED_COOLDOWN_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
+  const existingNiches = await context.db.select({ name: niches.name, status: niches.status, updatedAt: niches.updatedAt }).from(niches).all();
+
+  const reEvaluatable = new Set(
+    existingNiches
+      .filter((n) => n.status === "rejected" && n.updatedAt < cooldownCutoff)
+      .map((n) => n.name),
+  );
+
+  const dedupNiches = existingNiches.filter((n) => !reEvaluatable.has(n.name));
+  const existingExact = new Set(dedupNiches.map((n) => n.name));
+  const existingNormalized = new Set(dedupNiches.map((n) => normalizeForDedup(n.name)));
+
+  if (reEvaluatable.size > 0) {
+    log("info", `[Step 01] ${reEvaluatable.size} previously-rejected niches are eligible for re-evaluation (cooldown ${REJECTED_COOLDOWN_DAYS}d expired)`);
+  }
 
   const newNicheIds: string[] = [];
   let skippedDuplicates = 0;
@@ -220,20 +239,40 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
     const microMeta = trend.source === "micro_drill" ? microNicheMeta.get(exactName) : undefined;
 
-    const [inserted] = await context.db.insert(niches).values({
-      name: exactName,
-      source: trend.source,
-      status: "discovered",
-      searchVolume: realSearchVolume,
-      competitionLevel: realCompetition,
-      trendDirection: trend.trendDirection,
-      buyerPersona: microMeta?.buyerPersona,
-      occasion: microMeta?.occasion,
-      style: microMeta?.style,
-      pipelineRunId: context.pipelineRunId,
-    }).returning();
-
-    newNicheIds.push(inserted.id);
+    if (reEvaluatable.has(exactName)) {
+      // Reset previously-rejected niche for re-evaluation instead of inserting
+      const [updated] = await context.db.update(niches).set({
+        status: "discovered",
+        source: trend.source,
+        searchVolume: realSearchVolume,
+        competitionLevel: realCompetition,
+        trendDirection: trend.trendDirection,
+        buyerPersona: microMeta?.buyerPersona ?? null,
+        occasion: microMeta?.occasion ?? null,
+        style: microMeta?.style ?? null,
+        compositeScore: null,
+        scoreBreakdown: null,
+        passedThreshold: false,
+        pipelineRunId: context.pipelineRunId,
+        updatedAt: new Date().toISOString(),
+      }).where(eq(niches.name, exactName)).returning();
+      newNicheIds.push(updated.id);
+      reEvaluatable.delete(exactName);
+    } else {
+      const [inserted] = await context.db.insert(niches).values({
+        name: exactName,
+        source: trend.source,
+        status: "discovered",
+        searchVolume: realSearchVolume,
+        competitionLevel: realCompetition,
+        trendDirection: trend.trendDirection,
+        buyerPersona: microMeta?.buyerPersona,
+        occasion: microMeta?.occasion,
+        style: microMeta?.style,
+        pipelineRunId: context.pipelineRunId,
+      }).returning();
+      newNicheIds.push(inserted.id);
+    }
   }
 
   context.discoveredNicheIds = newNicheIds;

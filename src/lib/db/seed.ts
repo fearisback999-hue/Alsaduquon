@@ -10,7 +10,7 @@ config({ path: ".env" });
 
 const DEFAULT_SETTINGS = [
   // Pipeline
-  { key: "niche_score_threshold", value: "7.5", type: "number" as const, group: "pipeline" as const, description: "Minimum composite score for a niche to pass scoring" },
+  { key: "niche_score_threshold", value: "5.5", type: "number" as const, group: "pipeline" as const, description: "Minimum composite score for a niche to pass scoring" },
   { key: "concepts_per_niche", value: "5", type: "number" as const, group: "pipeline" as const, description: "Number of design concepts generated per approved niche" },
   { key: "max_image_attempts", value: "3", type: "number" as const, group: "pipeline" as const, description: "Maximum DALL-E generation attempts per concept" },
   { key: "mockups_per_product", value: "10", type: "number" as const, group: "pipeline" as const, description: "Target mockup count per product" },
@@ -36,7 +36,7 @@ const DEFAULT_SETTINGS = [
 
   // Limits
   { key: "max_daily_cost", value: "30.00", type: "number" as const, group: "limits" as const, description: "Maximum daily spend in USD" },
-  { key: "max_daily_listings", value: "25", type: "number" as const, group: "limits" as const, description: "Maximum listings published per day" },
+  { key: "max_daily_listings", value: "5", type: "number" as const, group: "limits" as const, description: "Maximum listings published per day (keep under 5 for new shops to avoid Etsy bot detection)" },
   { key: "max_products_per_design", value: "3", type: "number" as const, group: "limits" as const, description: "Max Printify products created per design concept" },
   { key: "pipeline_runs_per_day", value: "1", type: "number" as const, group: "limits" as const, description: "Pipeline runs per day (1 or 2). Second run at 2 PM UTC." },
 
@@ -74,6 +74,9 @@ async function seed() {
         updatedAt: new Date().toISOString(),
       });
       console.log(`  + ${setting.key} = ${setting.value}`);
+    } else if (setting.key === "niche_score_threshold" && existing.value === "7.5") {
+      await db.update(settings).set({ value: "5.5", updatedAt: new Date().toISOString() }).where(eq(settings.key, setting.key));
+      console.log(`  ↑ ${setting.key}: 7.5 → 5.5 (old threshold was unreachable without paid APIs)`);
     } else {
       console.log(`  ~ ${setting.key} already exists, skipping`);
     }
