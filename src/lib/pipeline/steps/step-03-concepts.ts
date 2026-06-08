@@ -2,7 +2,6 @@ import type { PipelineContext, StepResult } from "../context";
 import { niches, designConcepts } from "@/lib/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import { chatCompletion, StructuredOutputError } from "@/lib/ai/client";
-import { claudeCompletion } from "@/lib/ai/providers";
 import { DesignConceptsSchema, type DesignConcept } from "@/lib/ai/schemas";
 import { trackTextUsage } from "@/lib/ai/token-tracker";
 import { fullModeration } from "@/lib/ai/moderation";
@@ -63,23 +62,24 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   const activeSeasons = getActiveSeasons();
   const peakSeasonActive = activeSeasons.some((s) => s.scoreBoost >= 1.0);
 
-  async function processNiche(niche: typeof approvedNiches[0]): Promise<{ concepts: number; modRejects: number }> {
+  async function processNiche(niche: typeof approvedNiches[0]): Promise<{ concepts: number; modRejects: number; error?: string }> {
     let nicheConceptCount = 0;
     let nicheModRejects = 0;
 
-    await enforcebudget(0.05);
-    const safeNicheName = sanitizeForPrompt(niche.name);
+    try {
+      await enforcebudget(0.05);
+      const safeNicheName = sanitizeForPrompt(niche.name);
 
-    const seasonMatch = matchNicheToSeason(niche.name, activeSeasons);
-    const conceptCount = seasonMatch && seasonMatch.scoreBoost >= 1.0 ? 8 : peakSeasonActive ? 6 : 5;
+      const seasonMatch = matchNicheToSeason(niche.name, activeSeasons);
+      const conceptCount = seasonMatch && seasonMatch.scoreBoost >= 1.0 ? 8 : peakSeasonActive ? 6 : 5;
 
-    const [salesContext, designPerfContext] = await Promise.all([
-      formatSalesContextForConcepts(niche.name),
-      formatDesignPerformanceForConcepts(niche.name),
-    ]);
-    const seasonalContext = formatSeasonalContext();
+      const [salesContext, designPerfContext] = await Promise.all([
+        formatSalesContextForConcepts(niche.name),
+        formatDesignPerformanceForConcepts(niche.name),
+      ]);
+      const seasonalContext = formatSeasonalContext();
 
-    const prompt = `Generate ${conceptCount} print-on-demand design concepts for the niche: "${safeNicheName}"
+      const prompt = `Generate ${conceptCount} print-on-demand design concepts for the niche: "${safeNicheName}"
 
 ${salesContext}
 ${designPerfContext}
@@ -119,10 +119,7 @@ Return JSON:
   ]
 }`;
 
-    let concepts: DesignConcept[] = [];
-
-    try {
-      const useClaude = !!process.env.ANTHROPIC_API_KEY;
+      let concepts: DesignConcept[] = [];
       const MAX_DIVERSITY_RETRIES = 1;
 
       for (let attempt = 0; attempt <= MAX_DIVERSITY_RETRIES; attempt++) {
@@ -130,31 +127,28 @@ Return JSON:
           ? prompt
           : `${prompt}\n\nIMPORTANT: Your previous attempt returned only "${Array.from(new Set(concepts.map((c) => c.design_type)))[0] ?? "one"}" design types. You MUST mix at least 2 different design_type values. Do not return all of one type.`;
 
-        const result = useClaude
-          ? await claudeCompletion(attemptPrompt, {
-              systemPrompt: SYSTEM_PROMPT,
-              maxTokens: 4000,
-              temperature: 0.65,
-              schema: DesignConceptsSchema,
-            })
-          : await chatCompletion(attemptPrompt, {
-              systemPrompt: SYSTEM_PROMPT,
-              maxTokens: 4000,
-              temperature: 0.65,
-              schema: DesignConceptsSchema,
-              schemaName: "design_concepts",
-            });
+        log("info", `[Step 03] Calling AI for concept generation: niche="${niche.name}", attempt=${attempt + 1}`);
 
+        const result = await chatCompletion(attemptPrompt, {
+          systemPrompt: SYSTEM_PROMPT,
+          maxTokens: 4000,
+          temperature: 0.65,
+          schema: DesignConceptsSchema,
+          schemaName: "design_concepts",
+        });
+
+        const provider = result.model.startsWith("claude") ? "anthropic" : "openai";
         await trackTextUsage({
           model: result.model,
           operation: "concept_generation",
           inputTokens: result.inputTokens,
           outputTokens: result.outputTokens,
           pipelineRunId: context.pipelineRunId,
-          provider: useClaude ? "anthropic" : "openai",
+          provider,
         });
 
         concepts = result.parsed?.concepts ?? [];
+        log("info", `[Step 03] AI returned ${concepts.length} concepts for "${niche.name}" (model: ${result.model})`);
 
         const designTypes = new Set(concepts.map((c) => c.design_type));
         if (designTypes.size >= 2 || concepts.length < 3) break;
@@ -215,41 +209,61 @@ Return JSON:
         nicheConceptCount++;
       }
     } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
       if (error instanceof StructuredOutputError) {
-        log("error", `[Step 03] Concept schema validation failed for niche "${niche.name}"`, {
+        log("error", `[Step 03] Concept schema validation failed for niche "${niche.name}": ${msg}`, {
           schemaName: error.schemaName,
           issues: error.zodIssues,
         });
       } else {
-        log("error", `[Step 03] Concept generation failed for niche "${niche.name}"`, {
-          error: error instanceof Error ? error.message : String(error),
+        log("error", `[Step 03] Concept generation failed for niche "${niche.name}": ${msg}`, {
+          error: msg,
+          stack: error instanceof Error ? error.stack : undefined,
         });
       }
+      return { concepts: 0, modRejects: 0, error: msg };
     }
 
     return { concepts: nicheConceptCount, modRejects: nicheModRejects };
   }
 
   // Process niches in parallel batches
+  const nicheErrors: string[] = [];
+
   for (let i = 0; i < viableNiches.length; i += NICHE_BATCH_SIZE) {
     const batch = viableNiches.slice(i, i + NICHE_BATCH_SIZE);
     const results = await Promise.allSettled(batch.map(processNiche));
 
-    for (const result of results) {
+    for (let j = 0; j < results.length; j++) {
+      const result = results[j];
       if (result.status === "fulfilled") {
         totalConcepts += result.value.concepts;
         moderationRejects += result.value.modRejects;
+        if (result.value.error) {
+          nicheErrors.push(`"${batch[j].name}": ${result.value.error}`);
+        }
       } else {
-        log("error", `[Step 03] Batch niche processing failed`, {
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        const errMsg = result.reason instanceof Error ? result.reason.message : String(result.reason);
+        nicheErrors.push(`"${batch[j].name}": ${errMsg}`);
+        log("error", `[Step 03] Niche processing failed for "${batch[j].name}": ${errMsg}`, {
+          error: errMsg,
+          stack: result.reason instanceof Error ? result.reason.stack : undefined,
         });
       }
     }
   }
 
+  const errorSuffix = nicheErrors.length > 0
+    ? ` — ERRORS: ${nicheErrors.join("; ")}`
+    : "";
+
+  if (totalConcepts === 0 && viableNiches.length > 0 && nicheErrors.length > 0) {
+    log("error", `[Step 03] ALL ${viableNiches.length} niches failed concept generation. Errors: ${nicheErrors.join("; ")}`);
+  }
+
   return {
     status: "completed",
-    message: `Generated ${totalConcepts} concepts across ${viableNiches.length} niches (${moderationRejects} rejected by moderation, ${nichesSkippedForFailures} niches skipped for high image rejection rate)`,
-    data: { totalConcepts, moderationRejects, nichesProcessed: viableNiches.length, nichesSkippedForFailures },
+    message: `Generated ${totalConcepts} concepts across ${viableNiches.length} niches (${moderationRejects} rejected by moderation, ${nichesSkippedForFailures} niches skipped for high image rejection rate)${errorSuffix}`,
+    data: { totalConcepts, moderationRejects, nichesProcessed: viableNiches.length, nichesSkippedForFailures, errors: nicheErrors },
   };
 }
