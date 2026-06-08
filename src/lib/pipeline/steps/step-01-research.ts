@@ -147,8 +147,8 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   // Rejected niches older than the cooldown period are EXCLUDED from the dedup
   // set so they can be re-evaluated — they failed scoring before but may pass
   // now with different AI assessment or updated data.
-  const REJECTED_COOLDOWN_DAYS = 3;
-  const cooldownCutoff = new Date(Date.now() - REJECTED_COOLDOWN_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const REJECTED_COOLDOWN_HOURS = 12;
+  const cooldownCutoff = new Date(Date.now() - REJECTED_COOLDOWN_HOURS * 60 * 60 * 1000).toISOString();
 
   const existingNiches = await context.db.select({ name: niches.name, status: niches.status, updatedAt: niches.updatedAt }).from(niches).all();
 
@@ -163,7 +163,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   const existingNormalized = new Set(dedupNiches.map((n) => normalizeForDedup(n.name)));
 
   if (reEvaluatable.size > 0) {
-    log("info", `[Step 01] ${reEvaluatable.size} previously-rejected niches are eligible for re-evaluation (cooldown ${REJECTED_COOLDOWN_DAYS}d expired)`);
+    log("info", `[Step 01] ${reEvaluatable.size} previously-rejected niches are eligible for re-evaluation (cooldown ${REJECTED_COOLDOWN_HOURS}h expired)`);
   }
 
   const newNicheIds: string[] = [];
