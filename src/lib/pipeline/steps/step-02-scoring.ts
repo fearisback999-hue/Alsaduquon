@@ -276,7 +276,7 @@ Return JSON only:
   // minimum count. These are the best niches available this run, so quality is
   // preserved relative to what was discovered.
   const MIN_VIABLE_NICHES = 3;
-  const QUALITY_FLOOR = Math.max(3.5, scoreThreshold * 0.5);
+  const QUALITY_FLOOR = Math.max(4.0, scoreThreshold * 0.55);
   let promoted = 0;
 
   if (approved < MIN_VIABLE_NICHES) {
