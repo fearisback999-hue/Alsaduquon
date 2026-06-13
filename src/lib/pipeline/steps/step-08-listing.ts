@@ -74,6 +74,8 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   let failed = 0;
   let moderationRejects = 0;
   const perPlatform: Record<string, number> = {};
+  const errorSamples: string[] = [];
+  const recordError = (msg: string) => { if (errorSamples.length < 5) errorSamples.push(msg); };
 
   for (const [conceptId, conceptProducts] of Array.from(byConceptId.entries())) {
     const primaryProduct = conceptProducts.find((p) => p.productType === "unisex_tshirt") ?? conceptProducts[0];
@@ -259,9 +261,9 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         created++;
         perPlatform[platform.id] = (perPlatform[platform.id] ?? 0) + 1;
       } catch (error) {
-        log("error", `[Step 08] Draft listing creation failed on ${platform.id} for concept ${conceptId}`, {
-          error: error instanceof Error ? error.message : String(error),
-        });
+        const msg = error instanceof Error ? error.message : String(error);
+        log("error", `[Step 08] Draft listing creation failed on ${platform.id} for concept ${conceptId}: ${msg}`, { error: msg });
+        recordError(`${platform.id} / concept ${conceptId}: ${msg}`);
         await context.db.update(listings).set({
           status: "draft",
           updatedAt: new Date().toISOString(),
@@ -272,10 +274,22 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   }
 
   const platformSummary = Object.entries(perPlatform).map(([p, n]) => `${p}: ${n}`).join(", ");
+  const errorSuffix = errorSamples.length > 0 ? ` — ERRORS: ${errorSamples.join("; ")}` : "";
+
+  // Had products to list but created nothing due to real failures (not just
+  // moderation rejections) — fail so the run halts instead of pausing at an
+  // empty approval step.
+  if (created === 0 && failed > 0) {
+    return {
+      status: "failed",
+      message: `Created 0 draft listings, ${failed} failed, ${moderationRejects} moderation rejected${errorSuffix}`,
+      data: { created, failed, moderationRejects, perPlatform, errors: errorSamples },
+    };
+  }
 
   return {
     status: "completed",
-    message: `Created ${created} draft listings (${platformSummary}), ${failed} failed, ${moderationRejects} moderation rejected`,
-    data: { created, failed, moderationRejects, perPlatform },
+    message: `Created ${created} draft listings (${platformSummary}), ${failed} failed, ${moderationRejects} moderation rejected${errorSuffix}`,
+    data: { created, failed, moderationRejects, perPlatform, errors: errorSamples },
   };
 }

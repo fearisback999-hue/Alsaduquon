@@ -1,27 +1,10 @@
 import { chatCompletion } from "@/lib/ai/client";
-import { claudeCompletion } from "@/lib/ai/providers";
 import { ListingTagsSchema } from "@/lib/ai/schemas";
 import { trackTextUsage } from "@/lib/ai/token-tracker";
 
-const shouldUseClaude = () => !!process.env.ANTHROPIC_API_KEY;
-
+// Route through the unified chatCompletion wrapper for automatic OpenAI→Claude
+// fallback instead of hard-pinning to a single provider with no backstop.
 async function completeText(prompt: string, opts: { systemPrompt: string; maxTokens: number; temperature: number }, pipelineRunId?: string) {
-  if (shouldUseClaude()) {
-    const result = await claudeCompletion(prompt, {
-      systemPrompt: opts.systemPrompt,
-      maxTokens: opts.maxTokens,
-      temperature: opts.temperature,
-    });
-    await trackTextUsage({
-      model: result.model,
-      operation: "seo_text",
-      inputTokens: result.inputTokens,
-      outputTokens: result.outputTokens,
-      pipelineRunId,
-      provider: "anthropic",
-    });
-    return result;
-  }
   const result = await chatCompletion(prompt, {
     systemPrompt: opts.systemPrompt,
     maxTokens: opts.maxTokens,
@@ -33,6 +16,7 @@ async function completeText(prompt: string, opts: { systemPrompt: string; maxTok
     inputTokens: result.inputTokens,
     outputTokens: result.outputTokens,
     pipelineRunId,
+    provider: result.model.startsWith("claude") ? "anthropic" : "openai",
   });
   return result;
 }

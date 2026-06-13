@@ -21,11 +21,29 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
   let passed = 0;
   let failed = 0;
+  let infraErrors = 0;
+  const errorSamples: string[] = [];
+  const recordError = (msg: string) => { if (errorSamples.length < 5) errorSamples.push(msg); };
 
   for (const image of images) {
+    // An image marked "generated" with no blob URL can't be validated. Leave it
+    // as-is (recoverable) and record the problem rather than fetch(undefined).
+    if (!image.storageUrl) {
+      infraErrors++;
+      recordError(`image ${image.id}: missing storageUrl`);
+      await context.db.update(generatedImages).set({
+        errorMessage: "No storageUrl — blob persistence likely failed in Step 04",
+      }).where(eq(generatedImages.id, image.id));
+      failed++;
+      continue;
+    }
+
     try {
       // Download from Vercel Blob
-      const response = await fetch(image.storageUrl!);
+      const response = await fetch(image.storageUrl);
+      if (!response.ok) {
+        throw new Error(`Blob fetch returned ${response.status} for ${image.storageUrl}`);
+      }
       const rawBuffer = Buffer.from(await response.arrayBuffer());
 
       // Post-process: reduce AI artifacts
@@ -82,18 +100,36 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         failed++;
       }
     } catch (error) {
-      // Validation error — reject the image
+      // This is an INFRASTRUCTURE error (blob fetch, sharp, upscale, upload) —
+      // NOT a genuine "image is bad" rejection. Keep the image at "generated"
+      // status so a re-run can retry it once the infra issue is fixed, instead
+      // of permanently poisoning it to "rejected" (which the re-query skips).
+      const msg = error instanceof Error ? error.message : String(error);
+      infraErrors++;
+      recordError(`image ${image.id}: ${msg}`);
       await context.db.update(generatedImages).set({
-        status: "rejected",
-        errorMessage: error instanceof Error ? error.message : String(error),
+        errorMessage: msg,
       }).where(eq(generatedImages.id, image.id));
       failed++;
     }
   }
 
+  const errorSuffix = errorSamples.length > 0 ? ` — ERRORS: ${errorSamples.join("; ")}` : "";
+
+  // If nothing passed and the failures were infrastructure errors (not genuine
+  // quality rejections), fail the step so the run halts visibly. A systemic
+  // Blob/upscale/sharp outage shouldn't masquerade as a green "completed".
+  if (passed === 0 && images.length > 0 && infraErrors > 0) {
+    return {
+      status: "failed",
+      message: `Validation passed 0 of ${images.length} images — ${infraErrors} infrastructure errors (likely Blob/upscale/sharp)${errorSuffix}`,
+      data: { total: images.length, passed, failed, infraErrors, errors: errorSamples },
+    };
+  }
+
   return {
     status: "completed",
-    message: `Validated ${images.length} images: ${passed} passed, ${failed} failed`,
-    data: { total: images.length, passed, failed },
+    message: `Validated ${images.length} images: ${passed} passed, ${failed} failed${errorSuffix}`,
+    data: { total: images.length, passed, failed, infraErrors, errors: errorSamples },
   };
 }

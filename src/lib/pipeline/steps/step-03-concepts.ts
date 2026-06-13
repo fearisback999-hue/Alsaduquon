@@ -257,8 +257,18 @@ Return JSON:
     ? ` — ERRORS: ${nicheErrors.join("; ")}`
     : "";
 
-  if (totalConcepts === 0 && viableNiches.length > 0 && nicheErrors.length > 0) {
+  // If every niche errored out (not moderation rejections — actual API/code
+  // failures) and we produced nothing, FAIL the step so the pipeline halts
+  // visibly instead of silently marching downstream with 0 concepts. A
+  // misconfigured/quota-exhausted AI provider should stop the run loudly.
+  const allFailedWithErrors = totalConcepts === 0 && viableNiches.length > 0 && nicheErrors.length > 0;
+  if (allFailedWithErrors) {
     log("error", `[Step 03] ALL ${viableNiches.length} niches failed concept generation. Errors: ${nicheErrors.join("; ")}`);
+    return {
+      status: "failed",
+      message: `Concept generation failed for all ${viableNiches.length} niches${errorSuffix}`,
+      data: { totalConcepts: 0, moderationRejects, nichesProcessed: viableNiches.length, nichesSkippedForFailures, errors: nicheErrors },
+    };
   }
 
   return {

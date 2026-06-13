@@ -201,10 +201,19 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   const generatorName = useFlux ? "flux-1.1-pro-ultra" : "dall-e-3";
   const imageCost = useFlux ? FLUX_PRO_ULTRA_COST : 0.08;
 
+  // Config guard: image generation needs either Replicate (Flux) or an OpenAI
+  // key (DALL-E). With neither, every concept throws inside the loop and the
+  // step would report "completed" with 0 images — a silent stall. Fail early.
+  if (!useFlux && !process.env.OPENAI_API_KEY) {
+    return { status: "failed", message: "Image generation not configured — set REPLICATE_API_TOKEN (Flux) or OPENAI_API_KEY (DALL-E)." };
+  }
+
   let generated = 0;
   let failed = 0;
   let qualityRejected = 0;
   let totalCost = 0;
+  const errorSamples: string[] = [];
+  const recordError = (msg: string) => { if (errorSamples.length < 5) errorSamples.push(msg); };
 
   for (const concept of concepts) {
     let imageGenerated = false;
@@ -437,7 +446,13 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         generated++;
         break;
       } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        // Log EVERY caught exception, not just the last attempt — a repeating
+        // hard error (bad prompt, provider outage) was previously invisible
+        // until attempt 3.
+        log("warn", `[Step 04] Image attempt ${attempt}/${maxAttempts} failed for concept "${concept.title}": ${msg}`);
         if (attempt === maxAttempts) {
+          recordError(`"${concept.title}": ${msg}`);
           await context.db.insert(generatedImages).values({
             designConceptId: concept.id,
             prompt: currentPrompt,
@@ -445,7 +460,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
             attempt,
             maxAttempts,
             status: "failed",
-            errorMessage: error instanceof Error ? error.message : String(error),
+            errorMessage: msg,
             pipelineRunId: context.pipelineRunId,
           });
 
@@ -460,10 +475,25 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     }
   }
 
+  const errorSuffix = errorSamples.length > 0 ? ` — ERRORS: ${errorSamples.join("; ")}` : "";
+
+  // Produced zero images from a non-empty concept set. If any were hard
+  // failures (exceptions), fail the step so the pipeline halts visibly rather
+  // than running mockups/listings with nothing. (All-quality-rejected with no
+  // exceptions is also a dead end, so fail there too — nothing flows downstream.)
+  if (generated === 0 && concepts.length > 0) {
+    return {
+      status: "failed",
+      message: `Generated 0 images from ${concepts.length} concepts via ${generatorName} (${failed} hard failures, ${qualityRejected} quality/IP rejections)${errorSuffix}`,
+      cost: totalCost,
+      data: { generated, failed, qualityRejected, totalCost, generator: generatorName, errors: errorSamples },
+    };
+  }
+
   return {
     status: "completed",
-    message: `Generated ${generated} images via ${generatorName} (best-of-2 first attempt), ${failed} failed, ${qualityRejected} quality rejections (cost: $${totalCost.toFixed(2)})`,
+    message: `Generated ${generated} images via ${generatorName} (best-of-2 first attempt), ${failed} failed, ${qualityRejected} quality rejections (cost: $${totalCost.toFixed(2)})${errorSuffix}`,
     cost: totalCost,
-    data: { generated, failed, qualityRejected, totalCost, generator: generatorName },
+    data: { generated, failed, qualityRejected, totalCost, generator: generatorName, errors: errorSamples },
   };
 }
