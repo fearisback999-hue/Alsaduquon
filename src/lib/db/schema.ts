@@ -186,7 +186,7 @@ export const designValidations = sqliteTable("design_validations", {
 export const printifyProducts = sqliteTable("printify_products", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   designConceptId: text("design_concept_id").notNull().references(() => designConcepts.id, { onDelete: "cascade" }),
-  generatedImageId: text("generated_image_id").notNull().references(() => generatedImages.id),
+  generatedImageId: text("generated_image_id").notNull().references(() => generatedImages.id, { onDelete: "cascade" }),
   printifyProductId: text("printify_product_id"), // External Printify ID
   printifyShopId: text("printify_shop_id"),
   productType: text("product_type").notNull(),
@@ -266,7 +266,7 @@ export const listings = sqliteTable("listings", {
 }, (table) => ({
   statusIdx: index("listings_v2_status_idx").on(table.status),
   platformIdx: index("listings_v2_platform_idx").on(table.platform),
-  externalIdx: index("listings_v2_external_idx").on(table.platform, table.externalListingId),
+  externalIdx: uniqueIndex("listings_v2_external_idx").on(table.platform, table.externalListingId),
   productIdx: index("listings_v2_product_idx").on(table.printifyProductId),
 }));
 
@@ -299,7 +299,7 @@ export const approvalQueueEntries = sqliteTable("approval_queue_entries", {
 
 export const orders = sqliteTable("orders", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  listingId: text("listing_id").notNull().references(() => listings.id),
+  listingId: text("listing_id").notNull().references(() => listings.id, { onDelete: "cascade" }),
   platform: text("platform", { enum: ["etsy", "shopify", "tiktok", "depop", "redbubble", "amazon"] }).notNull().default("etsy"),
   externalOrderId: text("external_order_id"),
   printifyOrderId: text("printify_order_id"),

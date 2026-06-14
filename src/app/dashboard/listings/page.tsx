@@ -209,7 +209,7 @@ export default function ListingsPage() {
                         {listing.productType ? getProductDisplayName(listing.productType) : "—"}
                       </td>
                       <td className="px-5 py-3"><StatusBadge status={listing.status} /></td>
-                      <td className="px-5 py-3 text-right tabular-nums font-medium text-fg">${listing.finalPrice.toFixed(2)}</td>
+                      <td className="px-5 py-3 text-right tabular-nums font-medium text-fg">${listing.finalPrice?.toFixed(2) ?? "0.00"}</td>
                       <td className="px-5 py-3 text-right tabular-nums text-fg-muted">{listing.views?.toLocaleString() ?? "—"}</td>
                       <td className="px-5 py-3 text-right tabular-nums text-fg-muted">{listing.favorites?.toLocaleString() ?? "—"}</td>
                       <td className="px-5 py-3 text-right tabular-nums font-medium text-fg">{listing.sales ?? "—"}</td>

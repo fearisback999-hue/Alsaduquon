@@ -2,17 +2,49 @@ import { ExternalAPIError } from "@/lib/errors";
 import { withRetry } from "@/lib/retry";
 import { rateLimit } from "./rate-limiter";
 import { fetchWithTimeout } from "./fetch-timeout";
+import { db } from "@/lib/db";
+import { settings } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
+import { log } from "@/lib/logger";
 
 const BASE_URL = "https://openapi.etsy.com/v3";
 
 // OAuth 2.0 token management
 let cachedAccessToken: string | null = null;
+let cachedRefreshToken: string | null = null;
 let tokenExpiresAt = 0;
 // Dedupe concurrent refreshes — many OAuth providers invalidate a refresh token
 // after a single use, so parallel refreshes would kill each other.
 let refreshInFlight: Promise<string> | null = null;
 
+async function getLatestRefreshToken(): Promise<string> {
+  if (cachedRefreshToken) return cachedRefreshToken;
+  const stored = await db.select().from(settings).where(eq(settings.key, "etsy_refresh_token")).get();
+  if (stored?.value) {
+    cachedRefreshToken = stored.value;
+    return stored.value;
+  }
+  return process.env.ETSY_REFRESH_TOKEN!;
+}
+
+// Etsy rotates refresh tokens on every use — persist the new one to DB
+// so it survives serverless cold starts.
+async function persistRefreshToken(token: string): Promise<void> {
+  cachedRefreshToken = token;
+  try {
+    const existing = await db.select().from(settings).where(eq(settings.key, "etsy_refresh_token")).get();
+    if (existing) {
+      await db.update(settings).set({ value: token, updatedAt: new Date().toISOString() }).where(eq(settings.key, "etsy_refresh_token"));
+    } else {
+      await db.insert(settings).values({ key: "etsy_refresh_token", value: token, description: "Auto-rotated Etsy OAuth refresh token" });
+    }
+  } catch (e) {
+    log("error", `Failed to persist rotated Etsy refresh token: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
 async function doRefresh(): Promise<string> {
+  const refreshToken = await getLatestRefreshToken();
   const response = await fetchWithTimeout("https://api.etsy.com/v3/public/oauth/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -20,7 +52,7 @@ async function doRefresh(): Promise<string> {
       grant_type: "refresh_token",
       client_id: process.env.ETSY_CLIENT_ID!,
       redirect_uri: "https://localhost",
-      refresh_token: process.env.ETSY_REFRESH_TOKEN!,
+      refresh_token: refreshToken,
     }),
   });
 
@@ -32,7 +64,8 @@ async function doRefresh(): Promise<string> {
   const data = (await response.json()) as { access_token: string; expires_in: number; refresh_token: string };
 
   cachedAccessToken = data.access_token;
-  tokenExpiresAt = Date.now() + (data.expires_in - 60) * 1000; // Refresh 60s before expiry
+  tokenExpiresAt = Date.now() + (data.expires_in - 60) * 1000;
+  await persistRefreshToken(data.refresh_token);
 
   return data.access_token;
 }

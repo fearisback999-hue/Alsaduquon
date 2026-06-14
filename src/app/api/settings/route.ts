@@ -18,8 +18,9 @@ export async function GET() {
   const denied = await requireSessionApi();
   if (denied) return denied;
 
+  const HIDDEN_KEYS = new Set(["etsy_refresh_token"]);
   const allSettings = await db.select().from(settings).all();
-  return NextResponse.json({ settings: allSettings });
+  return NextResponse.json({ settings: allSettings.filter((s) => !HIDDEN_KEYS.has(s.key)) });
 }
 
 export async function PUT(request: NextRequest) {
