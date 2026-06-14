@@ -3,7 +3,8 @@ import { generatedImages, designConcepts, niches, printifyProducts, settings } f
 import { eq, inArray } from "drizzle-orm";
 import * as printify from "@/lib/external/printify";
 import { getProductConfig, getProductDisplayName, ALL_PRODUCT_TYPES } from "@/lib/printify/product-config";
-import { calculateDynamicPrice, calculateTeasePrice, selectHookVariantIndex, getTypicalCost, getTargetMargin } from "@/lib/pricing/engine";
+import { calculateDynamicPrice, calculateTeasePrice, selectHookVariantIndex, getTypicalCost, getTypicalShipping, getTargetMargin } from "@/lib/pricing/engine";
+import { isShippingIncludedInCost } from "@/lib/pricing/shipping";
 import { getProductTypePerformanceByNiche } from "@/lib/analytics/design-performance";
 import { log } from "@/lib/logger";
 
@@ -88,6 +89,9 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     context.db.select().from(settings).where(eq(settings.key, "tease_companion_retail_price")).get(),
   ]);
   const teaseEnabled = teaseEnabledSetting?.value === "true";
+  // Free-shipping model (default): fold merchant-paid shipping into the cost
+  // basis so prices actually net their target margin. Read once per run.
+  const includeShipping = await isShippingIncludedInCost();
   const teaseDiscountPct = teaseDiscountSetting ? parseFloat(teaseDiscountSetting.value) || 70 : 70;
   const teaseFloorMode = (teaseFloorModeSetting?.value === "safe" || teaseFloorModeSetting?.value === "absolute"
     ? teaseFloorModeSetting.value
@@ -182,12 +186,16 @@ export default async function execute(context: PipelineContext): Promise<StepRes
       try {
         const variantData = await printify.getVariants(config.blueprintId, config.printProviderId);
         const baseCost = getTypicalCost(productType);
+        const shippingCost = includeShipping ? getTypicalShipping(productType) : 0;
+        const landedCost = baseCost + shippingCost;
         const targetMargin = getTargetMargin(productType, niche?.competitionLevel);
 
         const pricing = isCompanion
           ? {
               retailPrice: companionRetailPrice,
               baseCost,
+              shippingCost,
+              landedCost,
               marginPercent: 0,
               demandMultiplier: 1,
               competitionAdjustment: 1,
@@ -196,6 +204,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
           : calculateDynamicPrice({
           productType,
           baseCost,
+          shippingCost,
           nicheCompositeScore: niche?.compositeScore ?? undefined,
           competitionLevel: niche?.competitionLevel ?? undefined,
           trendDirection: niche?.trendDirection ?? undefined,
@@ -205,8 +214,10 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         const variantsRaw = variantData.variants.slice(0, 20);
 
         const hookIndex = (teaseEnabled && !isCompanion) ? selectHookVariantIndex(variantsRaw) : null;
+        // Floor the hook against LANDED cost (base + shipping) so a bait sale
+        // never dips below true fee-inclusive break-even.
         const tease = teaseEnabled && !isCompanion && hookIndex != null
-          ? calculateTeasePrice(pricing.retailPrice, baseCost, teaseDiscountPct, {
+          ? calculateTeasePrice(pricing.retailPrice, landedCost, teaseDiscountPct, {
               floorMode: teaseFloorMode,
               absoluteFloor: teaseAbsoluteFloor,
             })
@@ -224,7 +235,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         if (tease && hookIndex != null) {
           const hookVariant = variantsRaw[hookIndex];
           const lossNote = tease.belowCost
-            ? ` ⚠️ BELOW COST ($${baseCost}) — every sale of this variant loses $${(baseCost - tease.hookPrice).toFixed(2)}, but it's selected to be the least likely to be picked`
+            ? ` ⚠️ BELOW LANDED COST ($${landedCost.toFixed(2)}) — every sale of this variant loses $${(landedCost - tease.hookPrice).toFixed(2)}, but it's selected to be the least likely to be picked`
             : "";
           log("info", `[Step 06] Tease on ${productType}: hook "${hookVariant.title}" at $${tease.hookPrice} (${tease.discountPct}% off, floor=${teaseFloorMode}), full $${pricing.retailPrice} on ${variantsRaw.length - 1} other variants${lossNote}`);
         }

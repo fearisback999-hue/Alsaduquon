@@ -24,6 +24,7 @@ const DEFAULT_SETTINGS = [
   // Pricing
   { key: "base_price", value: "25.00", type: "number" as const, group: "pricing" as const, description: "Minimum retail price in USD" },
   { key: "margin_percent", value: "40", type: "number" as const, group: "pricing" as const, description: "Target profit margin percentage" },
+  { key: "shipping_in_price", value: "true", type: "boolean" as const, group: "pricing" as const, description: "Free-shipping model: fold Printify's merchant shipping cost into the item price and profit math so '40% margin' is real. Turn off only if you charge buyers shipping separately." },
   { key: "max_title_length", value: "140", type: "number" as const, group: "pricing" as const, description: "Maximum Etsy listing title length" },
   { key: "max_tags", value: "13", type: "number" as const, group: "pricing" as const, description: "Maximum Etsy tags per listing" },
   { key: "tease_pricing_enabled", value: "false", type: "boolean" as const, group: "pricing" as const, description: "Set one variant at a discount so listings show 'from $X' in search. Picks a plausible but unpopular variant (e.g. cream Youth-Small) — looks like a real option, not obvious bait." },

@@ -19,6 +19,9 @@ export const SETTING_VALIDATORS: Record<string, z.ZodType<unknown>> = {
   // Pricing
   base_price: z.coerce.number().min(1).max(500),
   margin_percent: z.coerce.number().min(0).max(500),
+  // "true" = free-shipping model (fold merchant shipping into price & cost so
+  // margins are real). "false" = buyer pays shipping separately (revenue-neutral).
+  shipping_in_price: z.enum(["true", "false"]),
   max_title_length: z.coerce.number().int().min(20).max(140),
   max_tags: z.coerce.number().int().min(1).max(13),
 

@@ -18,6 +18,9 @@ import { expandWinningProducts } from "@/lib/pipeline/winner-product-expansion";
 import { refreshDeactivatedListings } from "@/lib/pipeline/listing-refresh";
 import { scrapeCompetitorPricing } from "@/lib/analytics/competitor-scraper";
 import { autoPausePipeline } from "@/lib/pipeline/payment-guard";
+import { detectMarginDrift } from "@/lib/pricing/margin-monitor";
+import { recommendDailyListingLimit } from "@/lib/pipeline/listing-limit-advisor";
+import { sendOperationalAlert } from "@/lib/notifications";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -86,6 +89,35 @@ export async function GET(request: NextRequest) {
     // Tracks top-seller prices, favorites, and sales to inform our pricing strategy.
     const competitorScrape = await scrapeCompetitorPricing();
     log("info", `Competitor scrape: ${competitorScrape.nichesScraped} niches, ${competitorScrape.listingsScraped} listings, avg price $${competitorScrape.avgPrice}`);
+
+    // Phase 8: Margin-drift monitor — recompute every live listing's margin
+    // against today's costs and alert on any that have slipped below target.
+    // Read-only: catches Printify price hikes before they erode profit at scale.
+    const marginDrift = await detectMarginDrift();
+    log("info", `Margin monitor: checked ${marginDrift.checked} listings, ${marginDrift.drifted.length} below target (worst ${marginDrift.worstMarginPct ?? "n/a"}%)`);
+    if (marginDrift.drifted.length > 0) {
+      const sample = marginDrift.drifted.slice(0, 5)
+        .map((d) => `"${d.title}" (${d.productType}) ${d.currentMarginPct}% vs ${d.targetMarginPct}% target`)
+        .join("; ");
+      await sendOperationalAlert(
+        "margin_drift",
+        `${marginDrift.drifted.length} listing(s) below margin target — worst ${marginDrift.worstMarginPct}%. Review pricing or deactivate. Examples: ${sample}`,
+        { count: marginDrift.drifted.length, worstMarginPct: marginDrift.worstMarginPct },
+      );
+    }
+
+    // Phase 9: Safe listing-limit advisory — recommend (never auto-apply) a
+    // ban-safe max_daily_listings as the shop ages, so the catalog can grow
+    // toward volume without tripping Etsy's new-shop throttles.
+    const limitAdvice = await recommendDailyListingLimit();
+    log("info", `Listing-limit advisor: ${limitAdvice.reason}`);
+    if (limitAdvice.canIncrease) {
+      await sendOperationalAlert("listing_limit_advice", limitAdvice.reason, {
+        shopAgeDays: limitAdvice.shopAgeDays,
+        currentLimit: limitAdvice.currentLimit,
+        recommendedLimit: limitAdvice.recommendedLimit,
+      });
+    }
 
     // Find underperforming listings:
     // Published 14+ days ago, has views but low conversion (<1%)
@@ -231,6 +263,8 @@ Return JSON:
       titleRotation,
       descriptionTagRotation,
       competitorScrape,
+      marginDrift: { checked: marginDrift.checked, flagged: marginDrift.drifted.length, worstMarginPct: marginDrift.worstMarginPct },
+      listingLimitAdvice: limitAdvice,
     });
   } catch (error) {
     log("error", "Optimization cron failed", { error: error instanceof Error ? error.message : String(error) });

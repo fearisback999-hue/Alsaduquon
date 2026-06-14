@@ -5,7 +5,8 @@ import { getEnabledPlatforms } from "@/lib/platforms/registry";
 import { generatePlatformTitleVariants, generatePlatformDescription, generatePlatformTags, calculateSEOScore } from "@/lib/seo/platform-seo";
 import { optimizeEtsyListing } from "@/lib/seo/etsy-optimizer";
 import { getProductDisplayName } from "@/lib/printify/product-config";
-import { calculateDynamicPrice, getTargetMargin } from "@/lib/pricing/engine";
+import { calculateDynamicPrice, getTargetMargin, getTypicalShipping } from "@/lib/pricing/engine";
+import { isShippingIncludedInCost } from "@/lib/pricing/shipping";
 import { fullModeration } from "@/lib/ai/moderation";
 import { enforcebudget } from "@/lib/cost/guard";
 import { recordCost } from "@/lib/cost/guard";
@@ -70,6 +71,11 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     byConceptId.set(product.designConceptId, group);
   }
 
+  // Free-shipping model (default): fold merchant-paid shipping into the cost
+  // basis. Stored as the listing's basePrice so every downstream profit
+  // calculator (order sync, repricer) reads a true landed cost.
+  const includeShipping = await isShippingIncludedInCost();
+
   let created = 0;
   let failed = 0;
   let moderationRejects = 0;
@@ -86,9 +92,11 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
     const productDisplayName = getProductDisplayName(primaryProduct.productType);
     const targetMargin = getTargetMargin(primaryProduct.productType, niche.competitionLevel);
+    const shippingCost = includeShipping ? getTypicalShipping(primaryProduct.productType) : 0;
     const pricing = calculateDynamicPrice({
       productType: primaryProduct.productType,
       baseCost: primaryProduct.baseCost ?? 15,
+      shippingCost,
       nicheCompositeScore: niche.compositeScore ?? undefined,
       competitionLevel: niche.competitionLevel ?? undefined,
       trendDirection: niche.trendDirection ?? undefined,
@@ -221,8 +229,10 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         tagVariants,
         tagVariantIndex: 0,
         seoScore,
-        basePrice: primaryProduct.baseCost ?? 15,
-        marginPercent: targetMargin,
+        // Landed cost (product base + merchant shipping) so order-sync profit
+        // and the repricer subtract the TRUE cost of goods, not just the blank.
+        basePrice: pricing.landedCost,
+        marginPercent: pricing.marginPercent,
         finalPrice: retailPrice,
         status: "draft",
         moderationResult: JSON.stringify(modResult),

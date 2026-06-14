@@ -54,6 +54,9 @@ export async function GET(request: NextRequest) {
             continue;
           }
 
+          // listing.basePrice is the stored LANDED cost (product + shipping under
+          // a free-shipping model), so profit here already nets shipping — no
+          // extra shipping term needed (passing one would double-count).
           const profitCalc = estimateProfit(order.revenue, listing.basePrice, order.quantity);
 
           await db.insert(orders).values({
@@ -63,7 +66,7 @@ export async function GET(request: NextRequest) {
             status: order.status,
             quantity: order.quantity,
             revenue: profitCalc.revenue,
-            cost: profitCalc.printifyCost,
+            cost: profitCalc.cost,
             profit: profitCalc.profit,
             customerRegion: order.customerRegion ?? null,
             orderedAt: order.orderedAt,
