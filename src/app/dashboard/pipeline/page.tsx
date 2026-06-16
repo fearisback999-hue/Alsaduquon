@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   Play,
   Pause,
@@ -102,6 +102,36 @@ function isTerminal(status: string): boolean {
   return status === "completed" || status === "failed" || status === "skipped";
 }
 
+function playNotificationSound(type: "success" | "error") {
+  try {
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    gain.gain.value = 0.3;
+
+    if (type === "success") {
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(523, ctx.currentTime);       // C5
+      osc.frequency.setValueAtTime(659, ctx.currentTime + 0.15); // E5
+      osc.frequency.setValueAtTime(784, ctx.currentTime + 0.3);  // G5
+      gain.gain.setValueAtTime(0.3, ctx.currentTime + 0.4);
+      gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.6);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.6);
+    } else {
+      osc.type = "square";
+      osc.frequency.setValueAtTime(330, ctx.currentTime);        // E4
+      osc.frequency.setValueAtTime(277, ctx.currentTime + 0.2);  // C#4
+      gain.gain.setValueAtTime(0.25, ctx.currentTime + 0.35);
+      gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.5);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.5);
+    }
+  } catch { /* AudioContext not available */ }
+}
+
 export default function PipelinePage() {
   const [data, setData] = useState<PipelineStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -111,6 +141,7 @@ export default function PipelinePage() {
   const [togglingAutopilot, setTogglingAutopilot] = useState(false);
   const [runsLimit, setRunsLimit] = useState(RUNS_PAGE_SIZE);
   const toast = useToast();
+  const prevRunStatus = useRef<string | null>(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -210,6 +241,17 @@ export default function PipelinePage() {
     }, 3000);
     return () => clearInterval(interval);
   }, [data?.run?.status, loadData]);
+
+  // Play a sound when the pipeline finishes or errors out
+  useEffect(() => {
+    const status = data?.run?.status ?? null;
+    const prev = prevRunStatus.current;
+    prevRunStatus.current = status;
+    if (!prev || prev === status) return;
+    if (status === "completed") playNotificationSound("success");
+    else if (status === "failed") playNotificationSound("error");
+    else if (status === "paused") playNotificationSound("success");
+  }, [data?.run?.status]);
 
   const run = data?.run;
   // When status is completed, show 100% — currentStep can lag at 9 if the
