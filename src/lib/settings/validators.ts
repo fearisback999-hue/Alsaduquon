@@ -32,8 +32,7 @@ export const SETTING_VALIDATORS: Record<string, z.ZodType<unknown>> = {
   pipeline_runs_per_day: z.coerce.number().int().min(1).max(4),
 
   // API
-  dalle_model: z.enum(["dall-e-3", "dall-e-2"]),
-  dalle_quality: z.enum(["hd", "standard"]),
+  image_generator: z.enum(["auto", "flux", "dalle"]),
   gpt_model: z.enum(["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "o3-mini"]),
 
   // Pipeline toggles

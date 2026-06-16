@@ -42,8 +42,7 @@ const DEFAULT_SETTINGS = [
   { key: "pipeline_runs_per_day", value: "1", type: "number" as const, group: "limits" as const, description: "Pipeline runs per day (1 or 2). Second run at 2 PM UTC." },
 
   // API
-  { key: "dalle_model", value: "dall-e-3", type: "string" as const, group: "api" as const, description: "DALL-E model to use for image generation" },
-  { key: "dalle_quality", value: "hd", type: "string" as const, group: "api" as const, description: "DALL-E image quality: hd or standard" },
+  { key: "image_generator", value: "auto", type: "string" as const, group: "api" as const, description: "Image generator: auto (prefer Flux, fall back to DALL-E), flux (Replicate only), or dalle (OpenAI only)" },
   { key: "gpt_model", value: "gpt-4o", type: "string" as const, group: "api" as const, description: "GPT model for text generation" },
 
   // Seasonal

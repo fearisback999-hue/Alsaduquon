@@ -275,8 +275,8 @@ Return JSON only:
   // niches that clear a quality FLOOR (so we never push genuine garbage) up to a
   // minimum count. These are the best niches available this run, so quality is
   // preserved relative to what was discovered.
-  const MIN_VIABLE_NICHES = 3;
-  const QUALITY_FLOOR = Math.max(4.0, scoreThreshold * 0.55);
+  const MIN_VIABLE_NICHES = 5;
+  const QUALITY_FLOOR = Math.max(3.5, scoreThreshold * 0.45);
   let promoted = 0;
 
   if (approved < MIN_VIABLE_NICHES) {

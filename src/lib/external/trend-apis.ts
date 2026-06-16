@@ -16,25 +16,39 @@ export interface TrendResult {
 // buckets into specific, sellable long-tail niches. This lets the pipeline
 // run end-to-end with only an OPENAI_API_KEY.
 const EVERGREEN_SEEDS = [
-  "dog mom gifts",
-  "registered nurse appreciation",
-  "teacher life",
-  "fishing dad",
-  "plant lady",
-  "mental health awareness",
-  "gym motivation",
-  "cat lover humor",
-  "retro gaming",
-  "coffee addict",
-  "camping outdoors",
-  "new mom baby shower",
-  "sarcastic office humor",
-  "vintage 80s aesthetic",
-  "book lover reading",
+  // Pool A — classic gift/identity niches
+  "dog mom gifts", "registered nurse appreciation", "teacher life",
+  "fishing dad", "plant lady", "mental health awareness",
+  "gym motivation", "cat lover humor", "retro gaming",
+  "coffee addict", "camping outdoors", "new mom baby shower",
+  "sarcastic office humor", "vintage 80s aesthetic", "book lover reading",
+  // Pool B — broader demographics & occasions
+  "firefighter pride", "gamer girl aesthetic", "best grandpa ever",
+  "introvert life humor", "yoga meditation peace", "motorcycle rider gifts",
+  "craft beer enthusiast", "softball mom", "astronomy space lover",
+  "country music fan", "basketball dad", "gardening grandma",
+  "travel wanderlust", "wine lover humor", "mechanic garage life",
+  // Pool C — trending themes & styles
+  "cottagecore aesthetic", "dark academia style", "true crime junkie",
+  "spicy bookish reader", "golden retriever mom", "disc golf lifestyle",
+  "pickleball obsessed", "homeschool mom life", "indigenous art pride",
+  "neurodivergent pride", "foster parent love", "beekeeper gifts",
+  "mountain biking life", "crochet knitting humor", "sourdough bread baker",
 ];
 
+const SEEDS_PER_RUN = 15;
+
 export function getSeedFallbackTrends(): TrendResult[] {
-  return EVERGREEN_SEEDS.map((keyword) => ({
+  // Rotate through the seed pool using the day-of-year so each run gets a
+  // fresh batch instead of hammering the same 15 keywords into dedup.
+  const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86_400_000);
+  const offset = (dayOfYear * SEEDS_PER_RUN) % EVERGREEN_SEEDS.length;
+  const selected: string[] = [];
+  for (let i = 0; i < SEEDS_PER_RUN; i++) {
+    selected.push(EVERGREEN_SEEDS[(offset + i) % EVERGREEN_SEEDS.length]);
+  }
+
+  return selected.map((keyword) => ({
     keyword,
     searchVolume: 0,
     competition: 0.5,

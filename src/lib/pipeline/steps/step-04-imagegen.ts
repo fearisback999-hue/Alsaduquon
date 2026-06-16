@@ -1,5 +1,5 @@
 import type { PipelineContext, StepResult } from "../context";
-import { designConcepts, generatedImages } from "@/lib/db/schema";
+import { designConcepts, generatedImages, settings } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { analyzeImage } from "@/lib/ai/client";
 import { generateImageFlux } from "@/lib/ai/providers";
@@ -197,16 +197,26 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     return { status: "completed", message: "No concepts ready for image generation" };
   }
 
-  const useFlux = !!process.env.REPLICATE_API_TOKEN;
+  // Respect the image_generator setting: "flux" (default when Replicate is
+  // configured), "dalle" (forces DALL-E even when Replicate is available),
+  // or "auto" (prefer Flux, fall back to DALL-E).
+  const genSetting = await context.db.select().from(settings).where(eq(settings.key, "image_generator")).get();
+  const genPref = (genSetting?.value ?? "auto").toLowerCase();
+
+  const hasFlux = !!process.env.REPLICATE_API_TOKEN;
+  const hasDalle = !!process.env.OPENAI_API_KEY;
+  const useFlux = genPref === "flux" ? hasFlux
+    : genPref === "dalle" ? false
+    : hasFlux; // "auto": prefer Flux
+
   const generatorName = useFlux ? "flux-1.1-pro-ultra" : "dall-e-3";
   const imageCost = useFlux ? FLUX_PRO_ULTRA_COST : 0.08;
 
-  // Config guard: image generation needs either Replicate (Flux) or an OpenAI
-  // key (DALL-E). With neither, every concept throws inside the loop and the
-  // step would report "completed" with 0 images — a silent stall. Fail early.
-  if (!useFlux && !process.env.OPENAI_API_KEY) {
+  if (!useFlux && !hasDalle) {
     return { status: "failed", message: "Image generation not configured — set REPLICATE_API_TOKEN (Flux) or OPENAI_API_KEY (DALL-E)." };
   }
+
+  log("info", `[Step 04] Using ${generatorName} (setting: ${genPref}, flux=${hasFlux ? "yes" : "no"}, dalle=${hasDalle ? "yes" : "no"})`);
 
   let generated = 0;
   let failed = 0;

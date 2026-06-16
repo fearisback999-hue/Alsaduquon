@@ -69,18 +69,12 @@ const FIELD_SPECS: Record<string, FieldSpec> = {
   max_daily_listings: { control: "number", min: 1, max: 500, step: 1 },
   max_products_per_design: { control: "number", min: 1, max: 16, step: 1 },
   pipeline_runs_per_day: { control: "number", min: 1, max: 4, step: 1 },
-  dalle_model: {
+  image_generator: {
     control: "select",
     options: [
-      { value: "dall-e-3", label: "DALL-E 3" },
-      { value: "dall-e-2", label: "DALL-E 2" },
-    ],
-  },
-  dalle_quality: {
-    control: "select",
-    options: [
-      { value: "hd", label: "HD" },
-      { value: "standard", label: "Standard" },
+      { value: "auto", label: "Auto (prefer Flux, fall back to DALL-E)" },
+      { value: "flux", label: "Flux only (Replicate — $0.06/image)" },
+      { value: "dalle", label: "DALL-E only (OpenAI — $0.08/image)" },
     ],
   },
   gpt_model: {
