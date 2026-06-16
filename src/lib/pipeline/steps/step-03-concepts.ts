@@ -1,6 +1,6 @@
 import type { PipelineContext, StepResult } from "../context";
-import { niches, designConcepts } from "@/lib/db/schema";
-import { eq, inArray } from "drizzle-orm";
+import { niches, designConcepts, printifyProducts, listings, settings } from "@/lib/db/schema";
+import { eq, inArray, desc } from "drizzle-orm";
 import { chatCompletion, StructuredOutputError } from "@/lib/ai/client";
 import { DesignConceptsSchema, type DesignConcept } from "@/lib/ai/schemas";
 import { trackTextUsage } from "@/lib/ai/token-tracker";
@@ -30,10 +30,45 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     return { status: "completed", message: "Dry run: skipped concept generation" };
   }
 
-  // Get approved niches
+  // Queue-aware capacity planning (auto-runs only — manual runs with specific
+  // nicheIds always process exactly what the operator asked for).
+  let nichesLimit = 0;
+  if (context.approvedNicheIds.length === 0) {
+    const TARGET_BUFFER_DAYS = 14;
+
+    const [dailySetting, maxProdSetting] = await Promise.all([
+      context.db.select().from(settings).where(eq(settings.key, "max_daily_listings")).get(),
+      context.db.select().from(settings).where(eq(settings.key, "max_products_per_design")).get(),
+    ]);
+    const dailyLimit = Math.max(1, parseInt(dailySetting?.value ?? "5") || 5);
+    const maxProductsPerDesign = Math.max(1, parseInt(maxProdSetting?.value ?? "3") || 3);
+    const targetBuffer = dailyLimit * TARGET_BUFFER_DAYS;
+
+    const [pendingProducts, pendingListings] = await Promise.all([
+      context.db.select({ id: printifyProducts.id }).from(printifyProducts).where(eq(printifyProducts.status, "created")).all(),
+      context.db.select({ id: listings.id }).from(listings).where(inArray(listings.status, ["draft", "pending_approval", "approved"])).all(),
+    ]);
+    const totalQueued = pendingProducts.length + pendingListings.length;
+
+    log("info", `[Step 03] Queue depth: ${totalQueued}/${targetBuffer} products ready (${dailyLimit}/day × ${TARGET_BUFFER_DAYS}-day buffer)`);
+
+    if (totalQueued >= targetBuffer) {
+      return {
+        status: "skipped",
+        message: `Queue already has ${totalQueued} products (${Math.floor(totalQueued / dailyLimit)} days of content at ${dailyLimit}/day). Skipping concept generation.`,
+      };
+    }
+
+    const productsNeeded = targetBuffer - totalQueued;
+    // 5 concepts/niche (conservative baseline — peak seasons may produce 6-8)
+    nichesLimit = Math.max(1, Math.ceil(Math.ceil(productsNeeded / maxProductsPerDesign) / 5));
+    log("info", `[Step 03] Need ${productsNeeded} more products — processing up to ${nichesLimit} highest-scored niches`);
+  }
+
+  // Get approved niches — best-scored first; auto-runs capped to nichesLimit
   const approvedNiches = context.approvedNicheIds.length > 0
-    ? await context.db.select().from(niches).where(inArray(niches.id, context.approvedNicheIds)).all()
-    : await context.db.select().from(niches).where(eq(niches.status, "approved")).all();
+    ? await context.db.select().from(niches).where(inArray(niches.id, context.approvedNicheIds)).orderBy(desc(niches.compositeScore)).all()
+    : await context.db.select().from(niches).where(eq(niches.status, "approved")).orderBy(desc(niches.compositeScore)).limit(nichesLimit).all();
 
   if (approvedNiches.length === 0) {
     return { status: "completed", message: "No approved niches for concept generation" };
