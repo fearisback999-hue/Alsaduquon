@@ -94,19 +94,22 @@ export default function DesignsPage() {
               style={{ animationDelay: `${Math.min(idx * 30, 360)}ms` }}
             >
               <div className="aspect-square bg-surface-2 relative overflow-hidden">
-                {design.images[0]?.storageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={design.images[0].storageUrl}
-                    alt={design.title}
-                    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-                  />
-                ) : (
-                  <div className="w-full h-full flex flex-col items-center justify-center text-fg-faint gap-2">
-                    <ImageOff className="h-6 w-6" />
-                    <span className="text-[10px] uppercase tracking-wider">No image</span>
-                  </div>
-                )}
+                {(() => {
+                  const displayImage = design.images.find((img) => img.storageUrl);
+                  return displayImage?.storageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={displayImage.storageUrl}
+                      alt={design.title}
+                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex flex-col items-center justify-center text-fg-faint gap-2">
+                      <ImageOff className="h-6 w-6" />
+                      <span className="text-[10px] uppercase tracking-wider">No image</span>
+                    </div>
+                  );
+                })()}
                 <div className="absolute top-2 right-2">
                   <StatusBadge status={design.status} />
                 </div>

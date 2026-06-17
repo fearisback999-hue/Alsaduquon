@@ -6,6 +6,15 @@ import { requireSessionApi } from "@/lib/auth/require-session";
 
 export const dynamic = "force-dynamic";
 
+const IMAGE_STATUS_PRIORITY: Record<string, number> = {
+  generated: 0,
+  validated: 1,
+  rejected: 2,
+  pending: 3,
+  generating: 4,
+  failed: 5,
+};
+
 export async function GET() {
   const denied = await requireSessionApi();
   if (denied) return denied;
@@ -40,9 +49,17 @@ export async function GET() {
 
   const enriched = concepts.map((concept) => {
     const niche = nicheById.get(concept.nicheId);
+    const images = imagesByConcept.get(concept.id) ?? [];
+    // Sort: images with URLs first, then by status priority (generated > rejected > failed)
+    images.sort((a, b) => {
+      const aHasUrl = a.storageUrl ? 0 : 1;
+      const bHasUrl = b.storageUrl ? 0 : 1;
+      if (aHasUrl !== bHasUrl) return aHasUrl - bHasUrl;
+      return (IMAGE_STATUS_PRIORITY[a.status] ?? 9) - (IMAGE_STATUS_PRIORITY[b.status] ?? 9);
+    });
     return {
       ...concept,
-      images: imagesByConcept.get(concept.id) ?? [],
+      images,
       niche: niche ? { name: niche.name } : null,
     };
   });
