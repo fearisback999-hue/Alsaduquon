@@ -137,6 +137,7 @@ export default function PipelinePage() {
   const [loading, setLoading] = useState(true);
   const [triggering, setTriggering] = useState(false);
   const [resuming, setResuming] = useState(false);
+  const [continuing, setContinuing] = useState(false);
   const [autopilotEnabled, setAutopilotEnabled] = useState<boolean | null>(null);
   const [togglingAutopilot, setTogglingAutopilot] = useState(false);
   const [resettingFailed, setResettingFailed] = useState(false);
@@ -204,6 +205,33 @@ export default function PipelinePage() {
       toast.error("Network error resuming pipeline");
     } finally {
       setResuming(false);
+      loadData();
+    }
+  }
+
+  // Continue a stopped (failed/paused) run from the step it died on, WITHOUT
+  // re-running the earlier steps. Concepts/images already saved in the DB are
+  // reused, so this doesn't re-spend on niche discovery, scoring, or concepts.
+  async function continuePipeline() {
+    if (continuing || !run) return;
+    const step = run.currentStep;
+    setContinuing(true);
+    try {
+      const res = await fetch("/api/pipeline/trigger", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ startFromStep: step }),
+      });
+      const result = await res.json();
+      if (!res.ok) {
+        toast.error(result.error ?? "Continue failed");
+      } else {
+        toast.success(`Continuing from step ${step} — ${result.status} (${result.completedSteps ?? 0} steps)`);
+      }
+    } catch {
+      toast.error("Network error continuing pipeline");
+    } finally {
+      setContinuing(false);
       loadData();
     }
   }
@@ -328,6 +356,17 @@ export default function PipelinePage() {
               {resuming ? "Resuming…" : "Resume run"}
             </Button>
           )}
+          {run?.status === "failed" && run.currentStep > 1 && (
+            <Button
+              variant="primary"
+              onClick={continuePipeline}
+              disabled={continuing}
+              loading={continuing}
+              leftIcon={continuing ? undefined : <PlayCircle className="h-4 w-4" />}
+            >
+              {continuing ? "Continuing…" : `Continue from step ${run.currentStep}`}
+            </Button>
+          )}
           {run?.status === "failed" && (
             <Button
               variant="secondary"
@@ -414,6 +453,25 @@ export default function PipelinePage() {
                   leftIcon={resuming ? undefined : <RotateCcw className="h-3.5 w-3.5" />}
                 >
                   {resuming ? "Resuming…" : "Resume"}
+                </Button>
+              </div>
+            )}
+            {run.status === "failed" && run.currentStep > 1 && (
+              <div className="mt-4 flex items-center gap-3 px-4 py-3 bg-warning-subtle rounded-xl border border-warning/20">
+                <PlayCircle className="h-5 w-5 text-warning flex-shrink-0" />
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-fg">Continue from step {run.currentStep}</p>
+                  <p className="text-xs text-fg-subtle mt-0.5">Picks up where it stopped using the niches and concepts already generated — no need to re-run (or re-pay for) the earlier steps.</p>
+                </div>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={continuePipeline}
+                  disabled={continuing}
+                  loading={continuing}
+                  leftIcon={continuing ? undefined : <PlayCircle className="h-3.5 w-3.5" />}
+                >
+                  {continuing ? "Continuing…" : "Continue"}
                 </Button>
               </div>
             )}
