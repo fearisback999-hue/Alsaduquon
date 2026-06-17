@@ -148,18 +148,21 @@ export default function ApprovalsPage() {
                 <div className="flex gap-4">
                   {/* Mockup */}
                   <div className="flex-shrink-0 w-28 h-28 sm:w-32 sm:h-32 bg-surface-2 rounded-lg overflow-hidden ring-1 ring-border relative group">
-                    {entry.mockups[0]?.storageUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={entry.mockups[0].storageUrl}
-                        alt={`Mockup for ${entry.listing?.title ?? "listing"}`}
-                        className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-fg-faint">
-                        <Sparkles className="h-5 w-5" />
-                      </div>
-                    )}
+                    {(() => {
+                      const displayMockup = entry.mockups.find((m: { storageUrl: string | null }) => m.storageUrl);
+                      return displayMockup?.storageUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={displayMockup.storageUrl}
+                          alt={`Mockup for ${entry.listing?.title ?? "listing"}`}
+                          className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-fg-faint">
+                          <Sparkles className="h-5 w-5" />
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Info */}

@@ -71,6 +71,18 @@ export async function GET(request: NextRequest) {
     arr.push(m);
     mockupsByProduct.set(m.printifyProductId, arr);
   }
+  // Sort: mockups with URLs first, then primary first, then by sortOrder
+  mockupsByProduct.forEach((arr) => {
+    arr.sort((a, b) => {
+      const aUrl = a.storageUrl ? 0 : 1;
+      const bUrl = b.storageUrl ? 0 : 1;
+      if (aUrl !== bUrl) return aUrl - bUrl;
+      const aPrimary = a.isPrimary ? 0 : 1;
+      const bPrimary = b.isPrimary ? 0 : 1;
+      if (aPrimary !== bPrimary) return aPrimary - bPrimary;
+      return (a.sortOrder ?? 99) - (b.sortOrder ?? 99);
+    });
+  });
 
   const imagesById = new Map(allImages.map((img) => [img.id, img]));
 

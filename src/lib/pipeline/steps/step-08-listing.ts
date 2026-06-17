@@ -111,6 +111,16 @@ export default async function execute(context: PipelineContext): Promise<StepRes
       .all();
 
     const imageUrls = productMockups
+      .filter(m => m.status !== "failed" && (m.storageUrl || m.originalUrl))
+      .sort((a, b) => {
+        const aUrl = a.storageUrl ? 0 : 1;
+        const bUrl = b.storageUrl ? 0 : 1;
+        if (aUrl !== bUrl) return aUrl - bUrl;
+        const aPrimary = a.isPrimary ? 0 : 1;
+        const bPrimary = b.isPrimary ? 0 : 1;
+        if (aPrimary !== bPrimary) return aPrimary - bPrimary;
+        return (a.sortOrder ?? 99) - (b.sortOrder ?? 99);
+      })
       .slice(0, 10)
       .map(m => m.storageUrl ?? m.originalUrl!)
       .filter(Boolean);
