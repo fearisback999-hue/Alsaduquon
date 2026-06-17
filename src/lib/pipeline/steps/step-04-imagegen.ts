@@ -2,7 +2,7 @@ import type { PipelineContext, StepResult } from "../context";
 import { designConcepts, generatedImages, settings } from "@/lib/db/schema";
 import { eq, inArray, sql } from "drizzle-orm";
 import { analyzeImage } from "@/lib/ai/client";
-import { generateImageFlux } from "@/lib/ai/providers";
+import { generateImageFlux, ReplicateRateLimitError } from "@/lib/ai/providers";
 import { ImageQualitySchema, type ImageQuality } from "@/lib/ai/schemas";
 import { trackImageUsage, trackTextUsage } from "@/lib/ai/token-tracker";
 import { enforcebudget } from "@/lib/cost/guard";
@@ -262,6 +262,8 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   let totalCost = 0;
   const errorSamples: string[] = [];
   const recordError = (msg: string) => { if (errorSamples.length < 5) errorSamples.push(msg); };
+  let fluxRateLimited = false;
+  let dalleFailoverCount = 0;
 
   for (const concept of concepts) {
     let imageGenerated = false;
@@ -269,37 +271,41 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     let currentPrompt = concept.stylePrompt ?? concept.title;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      // Best-of-2 on attempt 1: generate 2 candidates in parallel and pick
-      // the higher-scoring one. Doubles attempt-1 cost but dramatically
-      // improves quality and often avoids retries (which cost the same).
+      const attemptUseFlux = useFlux && !fluxRateLimited;
+      const attemptGenerator = attemptUseFlux ? "flux-1.1-pro-ultra" : "dall-e-3";
+      const attemptCost = attemptUseFlux ? FLUX_PRO_ULTRA_COST : 0.08;
+
       const candidateCount = attempt === 1 ? 2 : 1;
-      const estimatedStepCost = (imageCost + GPT4O_VISION_COST_ESTIMATE) * candidateCount;
+      const estimatedStepCost = (attemptCost + GPT4O_VISION_COST_ESTIMATE) * candidateCount;
       await enforcebudget(estimatedStepCost);
 
-      // NOTE: cost is recorded AFTER each candidate actually generates (below),
-      // not pre-recorded here. Pre-recording charged the budget even when the
-      // provider call failed (e.g. a 429 rate-limit generates no image and is
-      // never billed), which silently inflated the ledger by $0.07 per failed
-      // attempt — enough to falsely trip the daily budget cap.
-
       try {
-        const candidates: RawCandidate[] = await Promise.all(
-          Array.from({ length: candidateCount }, (_, i) =>
-            generateOneCandidate(concept, currentPrompt, attempt, String.fromCharCode(97 + i), useFlux),
-          ),
-        );
+        // Sequential for Flux (free-tier burst limit = 1), parallel for DALL-E.
+        let candidates: RawCandidate[];
+        if (attemptUseFlux) {
+          candidates = [];
+          for (let ci = 0; ci < candidateCount; ci++) {
+            if (ci > 0) await new Promise(r => setTimeout(r, 10_000));
+            candidates.push(await generateOneCandidate(concept, currentPrompt, attempt, String.fromCharCode(97 + ci), true));
+          }
+        } else {
+          candidates = await Promise.all(
+            Array.from({ length: candidateCount }, (_, i) =>
+              generateOneCandidate(concept, currentPrompt, attempt, String.fromCharCode(97 + i), false),
+            ),
+          );
+        }
 
         for (const c of candidates) {
           await trackImageUsage({
-            model: generatorName,
+            model: attemptGenerator,
             operation: "image_generation",
-            quality: useFlux ? "flux" : "hd",
+            quality: attemptUseFlux ? "flux" : "hd",
             durationMs: c.durationMs,
             pipelineRunId: context.pipelineRunId,
-            // Record the real spend now that the image actually generated.
             costPreRecorded: false,
           });
-          totalCost += imageCost;
+          totalCost += attemptCost;
         }
 
         // Score all candidates in parallel
@@ -354,7 +360,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
             prompt: currentPrompt,
             storagePath: loser.stored.pathname,
             storageUrl: loser.stored.url,
-            model: generatorName,
+            model: attemptGenerator,
             size: "1024x1024",
             quality: "hd",
             attempt,
@@ -385,7 +391,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
             prompt: currentPrompt,
             storagePath: winner.stored.pathname,
             storageUrl: winner.stored.url,
-            model: generatorName,
+            model: attemptGenerator,
             size: "1024x1024",
             quality: "hd",
             attempt,
@@ -413,7 +419,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
             prompt: currentPrompt,
             storagePath: winner.stored.pathname,
             storageUrl: winner.stored.url,
-            model: generatorName,
+            model: attemptGenerator,
             size: "1024x1024",
             quality: "hd",
             attempt,
@@ -443,7 +449,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
             prompt: currentPrompt,
             storagePath: winner.stored.pathname,
             storageUrl: winner.stored.url,
-            model: generatorName,
+            model: attemptGenerator,
             size: "1024x1024",
             quality: "hd",
             attempt,
@@ -490,17 +496,22 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         generated++;
         break;
       } catch (error) {
+        if (error instanceof ReplicateRateLimitError && hasDalle && !fluxRateLimited) {
+          log("warn", `[Step 04] Flux rate-limited — switching to DALL-E for all remaining images`);
+          fluxRateLimited = true;
+          dalleFailoverCount++;
+          attempt--;
+          continue;
+        }
+
         const msg = error instanceof Error ? error.message : String(error);
-        // Log EVERY caught exception, not just the last attempt — a repeating
-        // hard error (bad prompt, provider outage) was previously invisible
-        // until attempt 3.
         log("warn", `[Step 04] Image attempt ${attempt}/${maxAttempts} failed for concept "${concept.title}": ${msg}`);
         if (attempt === maxAttempts) {
           recordError(`"${concept.title}": ${msg}`);
           await context.db.insert(generatedImages).values({
             designConceptId: concept.id,
             prompt: currentPrompt,
-            model: generatorName,
+            model: attemptGenerator,
             attempt,
             maxAttempts,
             status: "failed",
@@ -515,7 +526,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     }
 
     if (imageGenerated) {
-      await new Promise((resolve) => setTimeout(resolve, useFlux ? 3000 : 12000));
+      await new Promise((resolve) => setTimeout(resolve, (useFlux && !fluxRateLimited) ? 3000 : 12000));
     }
   }
 
@@ -528,7 +539,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   if (generated === 0 && concepts.length > 0) {
     return {
       status: "failed",
-      message: `Generated 0 images from ${concepts.length} concepts via ${generatorName} (${failed} hard failures, ${qualityRejected} quality/IP rejections)${errorSuffix}`,
+      message: `Generated 0 images from ${concepts.length} concepts via ${fluxRateLimited ? `dall-e-3 (Flux rate-limited)` : generatorName} (${failed} hard failures, ${qualityRejected} quality/IP rejections)${errorSuffix}`,
       cost: totalCost,
       data: { generated, failed, qualityRejected, totalCost, generator: generatorName, errors: errorSamples },
     };
@@ -536,7 +547,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
   return {
     status: "completed",
-    message: `Generated ${generated} images via ${generatorName} (best-of-2 first attempt), ${failed} failed, ${qualityRejected} quality rejections (cost: $${totalCost.toFixed(2)})${errorSuffix}`,
+    message: `Generated ${generated} images via ${fluxRateLimited ? `dall-e-3 (Flux rate-limited)` : generatorName} (best-of-2 first attempt), ${failed} failed, ${qualityRejected} quality rejections (cost: $${totalCost.toFixed(2)})${errorSuffix}`,
     cost: totalCost,
     data: { generated, failed, qualityRejected, totalCost, generator: generatorName, errors: errorSamples },
   };

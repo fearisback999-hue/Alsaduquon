@@ -173,6 +173,13 @@ export async function claudeAnalyzeImage<T = unknown>(
 // REPLICATE (FLUX) — image generation
 // ============================================================
 
+export class ReplicateRateLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ReplicateRateLimitError";
+  }
+}
+
 const globalForReplicate = globalThis as unknown as { replicate: Replicate | undefined };
 
 function getReplicate(): Replicate {
@@ -188,15 +195,24 @@ export async function generateImageFlux(
 ): Promise<{ buffer: Buffer; format: string }> {
   const replicate = getReplicate();
 
-  const output = await replicate.run("black-forest-labs/flux-1.1-pro-ultra", {
-    input: {
-      prompt,
-      aspect_ratio: options?.aspectRatio ?? "1:1",
-      output_format: "png",
-      safety_tolerance: 2,
-      raw: options?.raw ?? true,
-    },
-  });
+  let output;
+  try {
+    output = await replicate.run("black-forest-labs/flux-1.1-pro-ultra", {
+      input: {
+        prompt,
+        aspect_ratio: options?.aspectRatio ?? "1:1",
+        output_format: "png",
+        safety_tolerance: 2,
+        raw: options?.raw ?? true,
+      },
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("rate limit") || msg.includes("429") || msg.includes("Too Many Requests")) {
+      throw new ReplicateRateLimitError(msg);
+    }
+    throw err;
+  }
 
   // Replicate returns a ReadableStream or URL depending on the model
   let buffer: Buffer;
