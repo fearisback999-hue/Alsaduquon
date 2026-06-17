@@ -10,7 +10,8 @@ import {
 } from "@/lib/db/schema";
 import { eq, and, sql, gte, desc, inArray } from "drizzle-orm";
 import { getProductConfig, getProductDisplayName } from "@/lib/printify/product-config";
-import { calculateDynamicPrice, getTypicalCost } from "@/lib/pricing/engine";
+import { calculateDynamicPrice, getTypicalCost, getTypicalShipping } from "@/lib/pricing/engine";
+import { isShippingIncludedInCost } from "@/lib/pricing/shipping";
 import * as printify from "@/lib/external/printify";
 import { log } from "@/lib/logger";
 
@@ -42,6 +43,8 @@ export async function expandWinningProducts(): Promise<ExpansionResult> {
   const cutoff = new Date(Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const shopId = process.env.PRINTIFY_SHOP_ID;
   if (!shopId) return result;
+
+  const includeShipping = await isShippingIncludedInCost();
 
   const winners = await db
     .select({
@@ -122,9 +125,11 @@ export async function expandWinningProducts(): Promise<ExpansionResult> {
       try {
         const variantData = await printify.getVariants(config.blueprintId, config.printProviderId);
         const baseCost = getTypicalCost(targetType);
+        const shippingCost = includeShipping ? getTypicalShipping(targetType) : 0;
         const pricing = calculateDynamicPrice({
           productType: targetType,
           baseCost,
+          shippingCost,
           nicheCompositeScore: winner.nicheCompositeScore ?? undefined,
           competitionLevel: winner.nicheCompetitionLevel ?? undefined,
           trendDirection: winner.nicheTrendDirection ?? undefined,

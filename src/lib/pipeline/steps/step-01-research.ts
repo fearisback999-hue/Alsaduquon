@@ -1,5 +1,6 @@
 import type { PipelineContext, StepResult } from "../context";
 import { niches } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { getAllTrends, getFlyingResearchVolume, expandNichesWithAI, type TrendResult } from "@/lib/external/trend-apis";
 import { batchValidateNiches } from "@/lib/external/etsy-search";
 import { enforcebudget } from "@/lib/cost/guard";
@@ -92,6 +93,16 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     );
   }
 
+  // When AI expansion AND micro-drilling both failed, we only have broad
+  // evergreen seeds. These are meant as INPUT to AI expansion, not as
+  // standalone niche candidates — Etsy rightfully filters them as
+  // oversaturated. Skip the Etsy gate entirely so the seeds can at least
+  // reach Step 2's AI scoring, and warn loudly.
+  const aiProducedNothing = expanded.length === 0 && microDrillResults.length === 0;
+  if (aiProducedNothing && trendResults.length > 0) {
+    log("warn", "[Step 01] AI expansion AND micro-drilling both produced 0 results — Etsy viability gate will be skipped so seed niches can reach AI scoring in Step 2. Check your OPENAI_API_KEY / ANTHROPIC_API_KEY.");
+  }
+
   const allCandidates = [...trendResults, ...expanded, ...microDrillResults];
 
   // ---- PRE-RANK + CAP ----
@@ -132,10 +143,28 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
   let etsyFiltered = 0;
 
-  // Load existing niche names for dedup (exact + fuzzy)
-  const existingNiches = await context.db.select({ name: niches.name }).from(niches).all();
-  const existingExact = new Set(existingNiches.map((n) => n.name));
-  const existingNormalized = new Set(existingNiches.map((n) => normalizeForDedup(n.name)));
+  // Load existing niche names for dedup (exact + fuzzy).
+  // Rejected niches older than the cooldown period are EXCLUDED from the dedup
+  // set so they can be re-evaluated — they failed scoring before but may pass
+  // now with different AI assessment or updated data.
+  const REJECTED_COOLDOWN_HOURS = 12;
+  const cooldownCutoff = new Date(Date.now() - REJECTED_COOLDOWN_HOURS * 60 * 60 * 1000).toISOString();
+
+  const existingNiches = await context.db.select({ name: niches.name, status: niches.status, updatedAt: niches.updatedAt }).from(niches).all();
+
+  const reEvaluatable = new Set(
+    existingNiches
+      .filter((n) => n.status === "rejected" && n.updatedAt < cooldownCutoff)
+      .map((n) => n.name),
+  );
+
+  const dedupNiches = existingNiches.filter((n) => !reEvaluatable.has(n.name));
+  const existingExact = new Set(dedupNiches.map((n) => n.name));
+  const existingNormalized = new Set(dedupNiches.map((n) => normalizeForDedup(n.name)));
+
+  if (reEvaluatable.size > 0) {
+    log("info", `[Step 01] ${reEvaluatable.size} previously-rejected niches are eligible for re-evaluation (cooldown ${REJECTED_COOLDOWN_HOURS}h expired)`);
+  }
 
   const newNicheIds: string[] = [];
   let skippedDuplicates = 0;
@@ -173,7 +202,8 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     }
 
     // Etsy viability gate — reject niches with no real marketplace demand.
-    // Skipped entirely when Etsy isn't connected (see note above).
+    // Skipped when: (a) Etsy isn't connected, or (b) AI expansion failed
+    // and we only have broad seeds that need Step 2 AI scoring.
     //
     // CRITICAL: only filter when `dataAvailable` is true. A failed Etsy API
     // call (bad/expired credentials, rate limit, outage) returns viability 0,
@@ -184,7 +214,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     if (etsyConfigured && etsyData && !etsyData.dataAvailable) {
       log("warn", `[Step 01] Etsy lookup unavailable for "${trend.keyword}" — letting it through (will be AI-scored in Step 2)`);
     }
-    if (etsyConfigured && etsyData && etsyData.dataAvailable && etsyData.viabilityScore < MIN_ETSY_VIABILITY_SCORE) {
+    if (etsyConfigured && !aiProducedNothing && etsyData && etsyData.dataAvailable && etsyData.viabilityScore < MIN_ETSY_VIABILITY_SCORE) {
       etsyFiltered++;
       log("info", `[Step 01] Etsy-filtered "${trend.keyword}" — viability ${etsyData.viabilityScore}/100 (${etsyData.activeListingCount} listings, avg ${etsyData.avgFavorites} favorites, ${etsyData.demandSignal} demand, ${etsyData.competitionLevel} competition)`);
       continue;
@@ -209,20 +239,40 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
     const microMeta = trend.source === "micro_drill" ? microNicheMeta.get(exactName) : undefined;
 
-    const [inserted] = await context.db.insert(niches).values({
-      name: exactName,
-      source: trend.source,
-      status: "discovered",
-      searchVolume: realSearchVolume,
-      competitionLevel: realCompetition,
-      trendDirection: trend.trendDirection,
-      buyerPersona: microMeta?.buyerPersona,
-      occasion: microMeta?.occasion,
-      style: microMeta?.style,
-      pipelineRunId: context.pipelineRunId,
-    }).returning();
-
-    newNicheIds.push(inserted.id);
+    if (reEvaluatable.has(exactName)) {
+      // Reset previously-rejected niche for re-evaluation instead of inserting
+      const [updated] = await context.db.update(niches).set({
+        status: "discovered",
+        source: trend.source,
+        searchVolume: realSearchVolume,
+        competitionLevel: realCompetition,
+        trendDirection: trend.trendDirection,
+        buyerPersona: microMeta?.buyerPersona ?? null,
+        occasion: microMeta?.occasion ?? null,
+        style: microMeta?.style ?? null,
+        compositeScore: null,
+        scoreBreakdown: null,
+        passedThreshold: false,
+        pipelineRunId: context.pipelineRunId,
+        updatedAt: new Date().toISOString(),
+      }).where(eq(niches.name, exactName)).returning();
+      newNicheIds.push(updated.id);
+      reEvaluatable.delete(exactName);
+    } else {
+      const [inserted] = await context.db.insert(niches).values({
+        name: exactName,
+        source: trend.source,
+        status: "discovered",
+        searchVolume: realSearchVolume,
+        competitionLevel: realCompetition,
+        trendDirection: trend.trendDirection,
+        buyerPersona: microMeta?.buyerPersona,
+        occasion: microMeta?.occasion,
+        style: microMeta?.style,
+        pipelineRunId: context.pipelineRunId,
+      }).returning();
+      newNicheIds.push(inserted.id);
+    }
   }
 
   context.discoveredNicheIds = newNicheIds;

@@ -145,12 +145,17 @@ Return JSON:
     } catch { /* triangulation is optional enrichment */ }
 
     // Phase B: Scoring with enriched context
+    const hasSearchVolume = niche.searchVolume != null && niche.searchVolume > 0;
+    const searchVolumeNote = hasSearchVolume
+      ? `${niche.searchVolume} monthly searches`
+      : "not measured (no paid API configured — score based on your market knowledge of this niche category, NOT as zero demand)";
+
     const scoringPrompt = `Analyze this print-on-demand niche and rate each metric on a scale of 0-10.
 
 Niche: "${safeNicheName}"
 
 HARD DATA:
-- Search volume: ${niche.searchVolume ?? "not available"} monthly searches
+- Search volume: ${searchVolumeNote}
 - Competition level: ${niche.competitionLevel ?? "not available"} (0-1 scale, 1 = highest)
 - Trend direction from APIs: ${niche.trendDirection ?? "not available"}
 - Demand velocity score: ${velocityScore}/10 (week-over-week growth tracking)
@@ -168,13 +173,13 @@ ${salesContext}
 ${velocityContext}
 
 Rate these metrics (0-10 scale, 10 = best for a POD seller):
-1. search_volume_score: How high is demand? Use the search volume number if available. (weight: ${weights.searchVolume})
+1. search_volume_score: Estimated buyer demand for this niche on Etsy. If no hard search volume number is provided, use your knowledge of the POD market — common gift niches (dog mom, nurse, teacher) typically warrant 5-7; obscure micro-niches 3-4. Do NOT default to 1 just because we lack API data. (weight: ${weights.searchVolume})
 2. competition_score: How LOW is competition? 10 = wide open market. Consider saturation assessment. (weight: ${weights.competition})
 3. sales_velocity_score: How fast will items sell? Use the velocity assessment and comparable niche data. (weight: ${weights.salesVelocity})
 4. seasonality_score: How evergreen is this? 10 = year-round demand, 3 = single-month spike. (weight: ${weights.seasonality})
 5. trending_score: Growth trajectory? 10 = explosive growth, 5 = stable, 2 = declining. (weight: ${weights.trending})
 
-CALIBRATION: A score of 7+ should be reserved for niches with strong evidence. Default to 5 when uncertain. Only score above 8 if hard data supports it.
+CALIBRATION: Default to 5 when uncertain — that represents an average viable niche. Score 7+ for niches with strong evidence of demand. Score below 3 only for niches that are clearly dead, oversaturated, or declining.
 
 Return JSON only:
 {
@@ -270,8 +275,8 @@ Return JSON only:
   // niches that clear a quality FLOOR (so we never push genuine garbage) up to a
   // minimum count. These are the best niches available this run, so quality is
   // preserved relative to what was discovered.
-  const MIN_VIABLE_NICHES = 3;
-  const QUALITY_FLOOR = Math.max(4, scoreThreshold * 0.6);
+  const MIN_VIABLE_NICHES = 5;
+  const QUALITY_FLOOR = Math.max(3.5, scoreThreshold * 0.45);
   let promoted = 0;
 
   if (approved < MIN_VIABLE_NICHES) {

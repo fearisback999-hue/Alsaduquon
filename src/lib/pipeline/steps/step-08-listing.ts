@@ -5,7 +5,8 @@ import { getEnabledPlatforms } from "@/lib/platforms/registry";
 import { generatePlatformTitleVariants, generatePlatformDescription, generatePlatformTags, calculateSEOScore } from "@/lib/seo/platform-seo";
 import { optimizeEtsyListing } from "@/lib/seo/etsy-optimizer";
 import { getProductDisplayName } from "@/lib/printify/product-config";
-import { calculateDynamicPrice, getTargetMargin } from "@/lib/pricing/engine";
+import { calculateDynamicPrice, getTargetMargin, getTypicalShipping } from "@/lib/pricing/engine";
+import { isShippingIncludedInCost } from "@/lib/pricing/shipping";
 import { fullModeration } from "@/lib/ai/moderation";
 import { enforcebudget } from "@/lib/cost/guard";
 import { recordCost } from "@/lib/cost/guard";
@@ -70,10 +71,17 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     byConceptId.set(product.designConceptId, group);
   }
 
+  // Free-shipping model (default): fold merchant-paid shipping into the cost
+  // basis. Stored as the listing's basePrice so every downstream profit
+  // calculator (order sync, repricer) reads a true landed cost.
+  const includeShipping = await isShippingIncludedInCost();
+
   let created = 0;
   let failed = 0;
   let moderationRejects = 0;
   const perPlatform: Record<string, number> = {};
+  const errorSamples: string[] = [];
+  const recordError = (msg: string) => { if (errorSamples.length < 5) errorSamples.push(msg); };
 
   for (const [conceptId, conceptProducts] of Array.from(byConceptId.entries())) {
     const primaryProduct = conceptProducts.find((p) => p.productType === "unisex_tshirt") ?? conceptProducts[0];
@@ -84,9 +92,11 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
     const productDisplayName = getProductDisplayName(primaryProduct.productType);
     const targetMargin = getTargetMargin(primaryProduct.productType, niche.competitionLevel);
+    const shippingCost = includeShipping ? getTypicalShipping(primaryProduct.productType) : 0;
     const pricing = calculateDynamicPrice({
       productType: primaryProduct.productType,
       baseCost: primaryProduct.baseCost ?? 15,
+      shippingCost,
       nicheCompositeScore: niche.compositeScore ?? undefined,
       competitionLevel: niche.competitionLevel ?? undefined,
       trendDirection: niche.trendDirection ?? undefined,
@@ -219,8 +229,10 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         tagVariants,
         tagVariantIndex: 0,
         seoScore,
-        basePrice: primaryProduct.baseCost ?? 15,
-        marginPercent: targetMargin,
+        // Landed cost (product base + merchant shipping) so order-sync profit
+        // and the repricer subtract the TRUE cost of goods, not just the blank.
+        basePrice: pricing.landedCost,
+        marginPercent: pricing.marginPercent,
         finalPrice: retailPrice,
         status: "draft",
         moderationResult: JSON.stringify(modResult),
@@ -259,9 +271,9 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         created++;
         perPlatform[platform.id] = (perPlatform[platform.id] ?? 0) + 1;
       } catch (error) {
-        log("error", `[Step 08] Draft listing creation failed on ${platform.id} for concept ${conceptId}`, {
-          error: error instanceof Error ? error.message : String(error),
-        });
+        const msg = error instanceof Error ? error.message : String(error);
+        log("error", `[Step 08] Draft listing creation failed on ${platform.id} for concept ${conceptId}: ${msg}`, { error: msg });
+        recordError(`${platform.id} / concept ${conceptId}: ${msg}`);
         await context.db.update(listings).set({
           status: "draft",
           updatedAt: new Date().toISOString(),
@@ -272,10 +284,22 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   }
 
   const platformSummary = Object.entries(perPlatform).map(([p, n]) => `${p}: ${n}`).join(", ");
+  const errorSuffix = errorSamples.length > 0 ? ` — ERRORS: ${errorSamples.join("; ")}` : "";
+
+  // Had products to list but created nothing due to real failures (not just
+  // moderation rejections) — fail so the run halts instead of pausing at an
+  // empty approval step.
+  if (created === 0 && failed > 0) {
+    return {
+      status: "failed",
+      message: `Created 0 draft listings, ${failed} failed, ${moderationRejects} moderation rejected${errorSuffix}`,
+      data: { created, failed, moderationRejects, perPlatform, errors: errorSamples },
+    };
+  }
 
   return {
     status: "completed",
-    message: `Created ${created} draft listings (${platformSummary}), ${failed} failed, ${moderationRejects} moderation rejected`,
-    data: { created, failed, moderationRejects, perPlatform },
+    message: `Created ${created} draft listings (${platformSummary}), ${failed} failed, ${moderationRejects} moderation rejected${errorSuffix}`,
+    data: { created, failed, moderationRejects, perPlatform, errors: errorSamples },
   };
 }

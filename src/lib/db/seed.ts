@@ -10,7 +10,7 @@ config({ path: ".env" });
 
 const DEFAULT_SETTINGS = [
   // Pipeline
-  { key: "niche_score_threshold", value: "7.5", type: "number" as const, group: "pipeline" as const, description: "Minimum composite score for a niche to pass scoring" },
+  { key: "niche_score_threshold", value: "5.5", type: "number" as const, group: "pipeline" as const, description: "Minimum composite score for a niche to pass scoring" },
   { key: "concepts_per_niche", value: "5", type: "number" as const, group: "pipeline" as const, description: "Number of design concepts generated per approved niche" },
   { key: "max_image_attempts", value: "3", type: "number" as const, group: "pipeline" as const, description: "Maximum DALL-E generation attempts per concept" },
   { key: "mockups_per_product", value: "10", type: "number" as const, group: "pipeline" as const, description: "Target mockup count per product" },
@@ -24,6 +24,7 @@ const DEFAULT_SETTINGS = [
   // Pricing
   { key: "base_price", value: "25.00", type: "number" as const, group: "pricing" as const, description: "Minimum retail price in USD" },
   { key: "margin_percent", value: "40", type: "number" as const, group: "pricing" as const, description: "Target profit margin percentage" },
+  { key: "shipping_in_price", value: "true", type: "boolean" as const, group: "pricing" as const, description: "Free-shipping model: fold Printify's merchant shipping cost into the item price and profit math so '40% margin' is real. Turn off only if you charge buyers shipping separately." },
   { key: "max_title_length", value: "140", type: "number" as const, group: "pricing" as const, description: "Maximum Etsy listing title length" },
   { key: "max_tags", value: "13", type: "number" as const, group: "pricing" as const, description: "Maximum Etsy tags per listing" },
   { key: "tease_pricing_enabled", value: "false", type: "boolean" as const, group: "pricing" as const, description: "Set one variant at a discount so listings show 'from $X' in search. Picks a plausible but unpopular variant (e.g. cream Youth-Small) — looks like a real option, not obvious bait." },
@@ -36,13 +37,12 @@ const DEFAULT_SETTINGS = [
 
   // Limits
   { key: "max_daily_cost", value: "30.00", type: "number" as const, group: "limits" as const, description: "Maximum daily spend in USD" },
-  { key: "max_daily_listings", value: "25", type: "number" as const, group: "limits" as const, description: "Maximum listings published per day" },
+  { key: "max_daily_listings", value: "5", type: "number" as const, group: "limits" as const, description: "Maximum listings published per day (keep under 5 for new shops to avoid Etsy bot detection)" },
   { key: "max_products_per_design", value: "3", type: "number" as const, group: "limits" as const, description: "Max Printify products created per design concept" },
   { key: "pipeline_runs_per_day", value: "1", type: "number" as const, group: "limits" as const, description: "Pipeline runs per day (1 or 2). Second run at 2 PM UTC." },
 
   // API
-  { key: "dalle_model", value: "dall-e-3", type: "string" as const, group: "api" as const, description: "DALL-E model to use for image generation" },
-  { key: "dalle_quality", value: "hd", type: "string" as const, group: "api" as const, description: "DALL-E image quality: hd or standard" },
+  { key: "image_generator", value: "auto", type: "string" as const, group: "api" as const, description: "Image generator: auto (prefer Flux, fall back to DALL-E), flux (Replicate only), or dalle (OpenAI only)" },
   { key: "gpt_model", value: "gpt-4o", type: "string" as const, group: "api" as const, description: "GPT model for text generation" },
 
   // Seasonal
@@ -74,6 +74,9 @@ async function seed() {
         updatedAt: new Date().toISOString(),
       });
       console.log(`  + ${setting.key} = ${setting.value}`);
+    } else if (setting.key === "niche_score_threshold" && existing.value === "7.5") {
+      await db.update(settings).set({ value: "5.5", updatedAt: new Date().toISOString() }).where(eq(settings.key, setting.key));
+      console.log(`  ↑ ${setting.key}: 7.5 → 5.5 (old threshold was unreachable without paid APIs)`);
     } else {
       console.log(`  ~ ${setting.key} already exists, skipping`);
     }

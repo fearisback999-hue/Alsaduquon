@@ -79,12 +79,12 @@ export function scoreTitle(
   const reasons: string[] = [];
   let score = 0;
 
-  // 1. Length utilization (30): Etsy indexes the whole title; a 60-char title
-  // on a 140-char budget is leaving keywords on the table.
-  const util = maxTitleLength > 0 ? title.length / maxTitleLength : 1;
-  if (util >= 0.7 && util <= 1.0) { score += 30; reasons.push("full length utilization"); }
-  else if (util >= 0.5) { score += 20; reasons.push("moderate length"); }
-  else { score += 8; reasons.push("title too short — wasted keyword space"); }
+  // 1. Length sweet spot (30): 70%+ of Etsy purchases are mobile where only
+  // ~70 chars display. Best titles pack primary keywords in 60-80 chars and
+  // use the rest (up to 140) for secondary search terms.
+  if (title.length >= 60 && title.length <= 100) { score += 30; reasons.push("mobile-optimized length"); }
+  else if (title.length >= 45 && title.length <= 140) { score += 20; reasons.push("acceptable length"); }
+  else { score += 8; reasons.push("title too short or too long for mobile"); }
 
   // 2. Head-keyword front-loading (25): the most weight is on the first ~40
   // chars, so the niche's primary word should appear there.

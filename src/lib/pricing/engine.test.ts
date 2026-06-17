@@ -5,8 +5,11 @@ import {
   selectHookVariantIndex,
   getTargetMargin,
   getTypicalCost,
+  getTypicalShipping,
+  getLandedCost,
   estimateEtsyFees,
 } from "./engine";
+import { estimateProfit } from "../etsy/pricing";
 
 describe("calculateDynamicPrice", () => {
   it("prices a t-shirt within its market range", () => {
@@ -155,5 +158,78 @@ describe("getTypicalCost", () => {
 
   it("falls back for unknown products", () => {
     expect(getTypicalCost("unknown")).toBe(15);
+  });
+});
+
+describe("shipping folded into the cost basis", () => {
+  it("getTypicalShipping returns a positive cost for known and unknown products", () => {
+    expect(getTypicalShipping("unisex_tshirt")).toBeGreaterThan(0);
+    expect(getTypicalShipping("unknown_product")).toBeGreaterThan(0);
+  });
+
+  it("getLandedCost adds shipping only when included", () => {
+    expect(getLandedCost("unisex_tshirt", 12, false)).toBe(12);
+    expect(getLandedCost("unisex_tshirt", 12, true)).toBe(12 + getTypicalShipping("unisex_tshirt"));
+  });
+
+  it("THE KEY FIX: nets a positive margin after BOTH fees and shipping", () => {
+    const ship = getTypicalShipping("mug_11oz");
+    const result = calculateDynamicPrice({
+      productType: "mug_11oz",
+      baseCost: 7,
+      shippingCost: ship,
+      marginPercent: 40,
+    });
+    const fees = estimateEtsyFees(result.retailPrice);
+    const realProfit = result.retailPrice - 7 - ship - fees;
+    expect(realProfit).toBeGreaterThan(0);
+  });
+
+  it("prices at least as high when shipping is folded in", () => {
+    const without = calculateDynamicPrice({ productType: "mug_11oz", baseCost: 7, marginPercent: 40 });
+    const withShip = calculateDynamicPrice({
+      productType: "mug_11oz",
+      baseCost: 7,
+      shippingCost: getTypicalShipping("mug_11oz"),
+      marginPercent: 40,
+    });
+    expect(withShip.retailPrice).toBeGreaterThanOrEqual(without.retailPrice);
+  });
+
+  it("reports landedCost and shippingCost in the result", () => {
+    const result = calculateDynamicPrice({
+      productType: "unisex_tshirt",
+      baseCost: 12,
+      shippingCost: 4.75,
+      marginPercent: 40,
+    });
+    expect(result.shippingCost).toBe(4.75);
+    expect(result.landedCost).toBeCloseTo(16.75, 2);
+  });
+
+  it("computes the reported margin against landed cost", () => {
+    const r = calculateDynamicPrice({
+      productType: "unisex_tshirt",
+      baseCost: 12,
+      shippingCost: 4.75,
+      marginPercent: 40,
+    });
+    const fees = estimateEtsyFees(r.retailPrice);
+    const expected = ((r.retailPrice - 16.75 - fees) / r.retailPrice) * 100;
+    expect(r.marginPercent).toBeCloseTo(expected, 1);
+  });
+});
+
+describe("estimateProfit accounts for shipping", () => {
+  it("subtracts merchant shipping from profit and adds it to total cost", () => {
+    const noShip = estimateProfit(30, 12, 1, 0);
+    const withShip = estimateProfit(30, 12, 1, 5);
+    expect(withShip.profit).toBeCloseTo(noShip.profit - 5, 2);
+    expect(withShip.cost).toBeCloseTo(noShip.cost + 5, 2);
+  });
+
+  it("scales shipping by quantity", () => {
+    const r = estimateProfit(60, 12, 2, 5);
+    expect(r.shippingCost).toBe(10);
   });
 });

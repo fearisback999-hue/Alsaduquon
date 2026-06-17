@@ -1,10 +1,7 @@
 import { chatCompletion } from "@/lib/ai/client";
-import { claudeCompletion } from "@/lib/ai/providers";
 import { ListingTagsSchema } from "@/lib/ai/schemas";
 import { trackTextUsage } from "@/lib/ai/token-tracker";
 import type { PlatformSEOHints } from "@/lib/platforms/types";
-
-const shouldUseClaude = () => !!process.env.ANTHROPIC_API_KEY;
 
 /**
  * Real marketplace signals for the niche, collected in Step 1 (search volume,
@@ -42,23 +39,12 @@ MARKET INTELLIGENCE (real data — use it to choose what to target):
 - Trending/explosive → lead with the trending term while it's hot.`;
 }
 
+// Route copy generation through the unified chatCompletion wrapper so it gets
+// automatic OpenAI→Claude fallback on quota errors. The old code hard-pinned to
+// Claude whenever ANTHROPIC_API_KEY was set, which meant ANY Claude error
+// (overloaded 529, auth, rate limit) threw with no backstop. Provider is
+// derived from the returned model name for accurate cost attribution.
 async function completeText(prompt: string, opts: { systemPrompt: string; maxTokens: number; temperature: number }, pipelineRunId?: string) {
-  if (shouldUseClaude()) {
-    const result = await claudeCompletion(prompt, {
-      systemPrompt: opts.systemPrompt,
-      maxTokens: opts.maxTokens,
-      temperature: opts.temperature,
-    });
-    await trackTextUsage({
-      model: result.model,
-      operation: "seo_text",
-      inputTokens: result.inputTokens,
-      outputTokens: result.outputTokens,
-      pipelineRunId,
-      provider: "anthropic",
-    });
-    return result;
-  }
   const result = await chatCompletion(prompt, {
     systemPrompt: opts.systemPrompt,
     maxTokens: opts.maxTokens,
@@ -70,6 +56,7 @@ async function completeText(prompt: string, opts: { systemPrompt: string; maxTok
     inputTokens: result.inputTokens,
     outputTokens: result.outputTokens,
     pipelineRunId,
+    provider: result.model.startsWith("claude") ? "anthropic" : "openai",
   });
   return result;
 }
@@ -192,7 +179,9 @@ Return ONLY the description text.`;
     temperature: 0.7,
   }, pipelineRunId);
 
-  return result.content.trim();
+  const description = result.content.trim();
+  const disclosure = "\n\n---\nDesign created with AI assistance.";
+  return description + disclosure;
 }
 
 export async function generatePlatformTags(

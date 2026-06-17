@@ -3,7 +3,8 @@ import { generatedImages, designConcepts, niches, printifyProducts, settings } f
 import { eq, inArray } from "drizzle-orm";
 import * as printify from "@/lib/external/printify";
 import { getProductConfig, getProductDisplayName, ALL_PRODUCT_TYPES } from "@/lib/printify/product-config";
-import { calculateDynamicPrice, calculateTeasePrice, selectHookVariantIndex, getTypicalCost, getTargetMargin } from "@/lib/pricing/engine";
+import { calculateDynamicPrice, calculateTeasePrice, selectHookVariantIndex, getTypicalCost, getTypicalShipping, getTargetMargin } from "@/lib/pricing/engine";
+import { isShippingIncludedInCost } from "@/lib/pricing/shipping";
 import { getProductTypePerformanceByNiche } from "@/lib/analytics/design-performance";
 import { log } from "@/lib/logger";
 
@@ -40,6 +41,18 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     return { status: "completed", message: "Dry run: skipped Printify product creation" };
   }
 
+  // Config guard: without these, every Printify call sends "Bearer undefined"
+  // and gets a 401 that the per-product catch swallows — the step would report
+  // "completed" with 0 products and the whole pipeline silently stalls. Fail
+  // loudly and early instead.
+  if (!process.env.PRINTIFY_API_TOKEN || !process.env.PRINTIFY_SHOP_ID) {
+    const missing = [
+      !process.env.PRINTIFY_API_TOKEN && "PRINTIFY_API_TOKEN",
+      !process.env.PRINTIFY_SHOP_ID && "PRINTIFY_SHOP_ID",
+    ].filter(Boolean).join(", ");
+    return { status: "failed", message: `Printify not configured — missing ${missing}. Add it to .env.local and restart.` };
+  }
+
   // Get validated images
   const images = context.validatedImageIds.length > 0
     ? await context.db.select().from(generatedImages).where(inArray(generatedImages.id, context.validatedImageIds)).all()
@@ -49,7 +62,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     return { status: "completed", message: "No validated images for product creation" };
   }
 
-  const shopId = process.env.PRINTIFY_SHOP_ID!;
+  const shopId = process.env.PRINTIFY_SHOP_ID;
   const allEnabledTypes = await getEnabledProductTypes(context.db);
 
   // Respect max_products_per_design setting
@@ -76,6 +89,9 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     context.db.select().from(settings).where(eq(settings.key, "tease_companion_retail_price")).get(),
   ]);
   const teaseEnabled = teaseEnabledSetting?.value === "true";
+  // Free-shipping model (default): fold merchant-paid shipping into the cost
+  // basis so prices actually net their target margin. Read once per run.
+  const includeShipping = await isShippingIncludedInCost();
   const teaseDiscountPct = teaseDiscountSetting ? parseFloat(teaseDiscountSetting.value) || 70 : 70;
   const teaseFloorMode = (teaseFloorModeSetting?.value === "safe" || teaseFloorModeSetting?.value === "absolute"
     ? teaseFloorModeSetting.value
@@ -95,25 +111,41 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
   let created = 0;
   let failed = 0;
+  const errorSamples: string[] = [];
+  const recordError = (msg: string) => { if (errorSamples.length < 5) errorSamples.push(msg); };
 
   for (const image of images) {
     // Get concept and niche info for the product title
     const concept = await context.db.select().from(designConcepts).where(eq(designConcepts.id, image.designConceptId)).get();
     const niche = concept ? await context.db.select().from(niches).where(eq(niches.id, concept.nicheId)).get() : null;
 
+    // A validated image with no persisted blob URL is a data-integrity problem
+    // (blob upload failed upstream but status was set to "validated"). Skip it
+    // explicitly instead of letting fetch(undefined) throw a misleading
+    // "upload failed" error.
+    if (!image.storageUrl) {
+      log("error", `[Step 06] Image ${image.id} is marked validated but has no storageUrl — skipping (blob persistence likely failed upstream)`);
+      recordError(`image ${image.id}: missing storageUrl`);
+      failed++;
+      continue;
+    }
+
     // Upload design image to Printify
     let printifyImageId: string;
     try {
-      const imageResponse = await fetch(image.storageUrl!);
+      const imageResponse = await fetch(image.storageUrl);
+      if (!imageResponse.ok) {
+        throw new Error(`Image fetch returned ${imageResponse.status} for ${image.storageUrl}`);
+      }
       const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
       const base64 = imageBuffer.toString("base64");
 
       const uploaded = await printify.uploadImage(`${image.id}.png`, base64);
       printifyImageId = uploaded.id;
     } catch (error) {
-      log("error", `[Step 06] Image upload to Printify failed for image ${image.id}`, {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      const msg = error instanceof Error ? error.message : String(error);
+      log("error", `[Step 06] Image upload to Printify failed for image ${image.id}: ${msg}`, { error: msg });
+      recordError(`image ${image.id} upload: ${msg}`);
       failed++;
       continue;
     }
@@ -154,12 +186,16 @@ export default async function execute(context: PipelineContext): Promise<StepRes
       try {
         const variantData = await printify.getVariants(config.blueprintId, config.printProviderId);
         const baseCost = getTypicalCost(productType);
+        const shippingCost = includeShipping ? getTypicalShipping(productType) : 0;
+        const landedCost = baseCost + shippingCost;
         const targetMargin = getTargetMargin(productType, niche?.competitionLevel);
 
         const pricing = isCompanion
           ? {
               retailPrice: companionRetailPrice,
               baseCost,
+              shippingCost,
+              landedCost,
               marginPercent: 0,
               demandMultiplier: 1,
               competitionAdjustment: 1,
@@ -168,6 +204,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
           : calculateDynamicPrice({
           productType,
           baseCost,
+          shippingCost,
           nicheCompositeScore: niche?.compositeScore ?? undefined,
           competitionLevel: niche?.competitionLevel ?? undefined,
           trendDirection: niche?.trendDirection ?? undefined,
@@ -177,8 +214,10 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         const variantsRaw = variantData.variants.slice(0, 20);
 
         const hookIndex = (teaseEnabled && !isCompanion) ? selectHookVariantIndex(variantsRaw) : null;
+        // Floor the hook against LANDED cost (base + shipping) so a bait sale
+        // never dips below true fee-inclusive break-even.
         const tease = teaseEnabled && !isCompanion && hookIndex != null
-          ? calculateTeasePrice(pricing.retailPrice, baseCost, teaseDiscountPct, {
+          ? calculateTeasePrice(pricing.retailPrice, landedCost, teaseDiscountPct, {
               floorMode: teaseFloorMode,
               absoluteFloor: teaseAbsoluteFloor,
             })
@@ -196,7 +235,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         if (tease && hookIndex != null) {
           const hookVariant = variantsRaw[hookIndex];
           const lossNote = tease.belowCost
-            ? ` ⚠️ BELOW COST ($${baseCost}) — every sale of this variant loses $${(baseCost - tease.hookPrice).toFixed(2)}, but it's selected to be the least likely to be picked`
+            ? ` ⚠️ BELOW LANDED COST ($${landedCost.toFixed(2)}) — every sale of this variant loses $${(landedCost - tease.hookPrice).toFixed(2)}, but it's selected to be the least likely to be picked`
             : "";
           log("info", `[Step 06] Tease on ${productType}: hook "${hookVariant.title}" at $${tease.hookPrice} (${tease.discountPct}% off, floor=${teaseFloorMode}), full $${pricing.retailPrice} on ${variantsRaw.length - 1} other variants${lossNote}`);
         }
@@ -258,9 +297,9 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         context.createdProductIds.push(reservation.id);
         created++;
       } catch (error) {
-        log("error", `[Step 06] Product creation failed for ${productType} (image ${image.id})`, {
-          error: error instanceof Error ? error.message : String(error),
-        });
+        const msg = error instanceof Error ? error.message : String(error);
+        log("error", `[Step 06] Product creation failed for ${productType} (image ${image.id}): ${msg}`, { error: msg });
+        recordError(`${productType} (image ${image.id}): ${msg}`);
         failed++;
         // Mark the pre-inserted reservation as failed if it exists
         const creatingRows = await context.db
@@ -289,9 +328,21 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     }
   }
 
+  // If we had images to work with but created nothing, the step failed —
+  // surface it so the engine halts instead of marching to mockups/listings
+  // with an empty product set.
+  const errorSuffix = errorSamples.length > 0 ? ` — ERRORS: ${errorSamples.join("; ")}` : "";
+  if (created === 0 && images.length > 0) {
+    return {
+      status: "failed",
+      message: `Created 0 products from ${images.length} validated images (${failed} failed)${errorSuffix}`,
+      data: { created, failed, images: images.length, productTypes: enabledTypes.length, errors: errorSamples },
+    };
+  }
+
   return {
     status: "completed",
-    message: `Created ${created} products across ${enabledTypes.length} types, ${failed} failed`,
-    data: { created, failed, images: images.length, productTypes: enabledTypes.length },
+    message: `Created ${created} products across ${enabledTypes.length} types, ${failed} failed${errorSuffix}`,
+    data: { created, failed, images: images.length, productTypes: enabledTypes.length, errors: errorSamples },
   };
 }

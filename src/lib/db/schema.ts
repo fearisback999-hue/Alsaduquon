@@ -266,7 +266,7 @@ export const listings = sqliteTable("listings", {
 }, (table) => ({
   statusIdx: index("listings_v2_status_idx").on(table.status),
   platformIdx: index("listings_v2_platform_idx").on(table.platform),
-  externalIdx: index("listings_v2_external_idx").on(table.platform, table.externalListingId),
+  externalIdx: uniqueIndex("listings_v2_external_idx").on(table.platform, table.externalListingId),
   productIdx: index("listings_v2_product_idx").on(table.printifyProductId),
 }));
 

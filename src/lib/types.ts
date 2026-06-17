@@ -51,7 +51,7 @@ export const SCORING_WEIGHTS = {
   trending: 0.10,
 } as const;
 
-export const SCORE_THRESHOLD = 7.5;
+export const SCORE_THRESHOLD = 5.5;
 
 // Cost constants
 export const DALLE_COST_HD = 0.08;

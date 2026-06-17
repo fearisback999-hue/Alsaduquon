@@ -1,6 +1,6 @@
 import type { PipelineContext, StepResult } from "../context";
-import { designConcepts, generatedImages } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { designConcepts, generatedImages, settings } from "@/lib/db/schema";
+import { eq, inArray, sql } from "drizzle-orm";
 import { analyzeImage } from "@/lib/ai/client";
 import { generateImageFlux } from "@/lib/ai/providers";
 import { ImageQualitySchema, type ImageQuality } from "@/lib/ai/schemas";
@@ -187,24 +187,81 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     return { status: "completed", message: "Dry run: skipped image generation" };
   }
 
-  const concepts = await context.db
+  // Pick up both fresh concepts ("moderated") AND previously-failed ones so
+  // the pipeline self-heals after transient errors (rate limits, outages).
+  // Failed concepts get up to MAX_RUN_RETRIES additional pipeline runs before
+  // being permanently abandoned.
+  const MAX_RUN_RETRIES = 3;
+
+  const freshConcepts = await context.db
     .select()
     .from(designConcepts)
     .where(eq(designConcepts.status, "moderated"))
     .all();
 
+  const retriableConcepts = await context.db
+    .select()
+    .from(designConcepts)
+    .where(eq(designConcepts.status, "failed"))
+    .all();
+
+  // Only retry concepts that haven't exceeded the cross-run attempt cap.
+  // We count how many failed image records exist per concept across all runs.
+  const retrying: typeof freshConcepts = [];
+  for (const c of retriableConcepts) {
+    const failedImages = await context.db
+      .select({ count: sql<number>`count(*)` })
+      .from(generatedImages)
+      .where(eq(generatedImages.designConceptId, c.id))
+      .get();
+    const totalRunAttempts = Math.ceil((failedImages?.count ?? 0) / 3); // 3 attempts per run
+    if (totalRunAttempts < MAX_RUN_RETRIES) {
+      retrying.push(c);
+    }
+  }
+
+  if (retrying.length > 0) {
+    log("info", `[Step 04] Retrying ${retrying.length} previously-failed concepts (self-heal)`);
+    // Reset their status so downstream logic treats them the same as fresh
+    await context.db
+      .update(designConcepts)
+      .set({ status: "moderated" })
+      .where(inArray(designConcepts.id, retrying.map((c) => c.id)));
+  }
+
+  const concepts = [...freshConcepts, ...retrying];
+
   if (concepts.length === 0) {
     return { status: "completed", message: "No concepts ready for image generation" };
   }
 
-  const useFlux = !!process.env.REPLICATE_API_TOKEN;
+  // Respect the image_generator setting: "flux" (default when Replicate is
+  // configured), "dalle" (forces DALL-E even when Replicate is available),
+  // or "auto" (prefer Flux, fall back to DALL-E).
+  const genSetting = await context.db.select().from(settings).where(eq(settings.key, "image_generator")).get();
+  const genPref = (genSetting?.value ?? "auto").toLowerCase();
+
+  const hasFlux = !!process.env.REPLICATE_API_TOKEN;
+  const hasDalle = !!process.env.OPENAI_API_KEY;
+  const useFlux = genPref === "flux" ? hasFlux
+    : genPref === "dalle" ? false
+    : hasFlux; // "auto": prefer Flux
+
   const generatorName = useFlux ? "flux-1.1-pro-ultra" : "dall-e-3";
   const imageCost = useFlux ? FLUX_PRO_ULTRA_COST : 0.08;
+
+  if (!useFlux && !hasDalle) {
+    return { status: "failed", message: "Image generation not configured — set REPLICATE_API_TOKEN (Flux) or OPENAI_API_KEY (DALL-E)." };
+  }
+
+  log("info", `[Step 04] Using ${generatorName} (setting: ${genPref}, flux=${hasFlux ? "yes" : "no"}, dalle=${hasDalle ? "yes" : "no"})`);
 
   let generated = 0;
   let failed = 0;
   let qualityRejected = 0;
   let totalCost = 0;
+  const errorSamples: string[] = [];
+  const recordError = (msg: string) => { if (errorSamples.length < 5) errorSamples.push(msg); };
 
   for (const concept of concepts) {
     let imageGenerated = false;
@@ -437,7 +494,13 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         generated++;
         break;
       } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        // Log EVERY caught exception, not just the last attempt — a repeating
+        // hard error (bad prompt, provider outage) was previously invisible
+        // until attempt 3.
+        log("warn", `[Step 04] Image attempt ${attempt}/${maxAttempts} failed for concept "${concept.title}": ${msg}`);
         if (attempt === maxAttempts) {
+          recordError(`"${concept.title}": ${msg}`);
           await context.db.insert(generatedImages).values({
             designConceptId: concept.id,
             prompt: currentPrompt,
@@ -445,7 +508,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
             attempt,
             maxAttempts,
             status: "failed",
-            errorMessage: error instanceof Error ? error.message : String(error),
+            errorMessage: msg,
             pipelineRunId: context.pipelineRunId,
           });
 
@@ -460,10 +523,25 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     }
   }
 
+  const errorSuffix = errorSamples.length > 0 ? ` — ERRORS: ${errorSamples.join("; ")}` : "";
+
+  // Produced zero images from a non-empty concept set. If any were hard
+  // failures (exceptions), fail the step so the pipeline halts visibly rather
+  // than running mockups/listings with nothing. (All-quality-rejected with no
+  // exceptions is also a dead end, so fail there too — nothing flows downstream.)
+  if (generated === 0 && concepts.length > 0) {
+    return {
+      status: "failed",
+      message: `Generated 0 images from ${concepts.length} concepts via ${generatorName} (${failed} hard failures, ${qualityRejected} quality/IP rejections)${errorSuffix}`,
+      cost: totalCost,
+      data: { generated, failed, qualityRejected, totalCost, generator: generatorName, errors: errorSamples },
+    };
+  }
+
   return {
     status: "completed",
-    message: `Generated ${generated} images via ${generatorName} (best-of-2 first attempt), ${failed} failed, ${qualityRejected} quality rejections (cost: $${totalCost.toFixed(2)})`,
+    message: `Generated ${generated} images via ${generatorName} (best-of-2 first attempt), ${failed} failed, ${qualityRejected} quality rejections (cost: $${totalCost.toFixed(2)})${errorSuffix}`,
     cost: totalCost,
-    data: { generated, failed, qualityRejected, totalCost, generator: generatorName },
+    data: { generated, failed, qualityRejected, totalCost, generator: generatorName, errors: errorSamples },
   };
 }

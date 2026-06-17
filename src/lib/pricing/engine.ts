@@ -36,46 +36,56 @@ function priceForNetMargin(cost: number, marginFraction: number): number {
   return (cost + ETSY_FLAT_FEE) / denom;
 }
 
-// Product-type specific pricing ranges based on Etsy POD market data
-const PRODUCT_PRICING: Record<string, { minPrice: number; maxPrice: number; typicalCost: number }> = {
+// Product-type specific pricing ranges based on Etsy POD market data.
+// typicalShipping is what Printify bills the MERCHANT to ship one item (US,
+// first item). Under a free-shipping model (item price includes shipping) this
+// is a real cost of goods — ignoring it made every "40% margin" listing
+// actually clear far less. Values are conservative first-item estimates.
+const PRODUCT_PRICING: Record<string, { minPrice: number; maxPrice: number; typicalCost: number; typicalShipping: number }> = {
   // Apparel
-  unisex_tshirt:       { minPrice: 22, maxPrice: 32, typicalCost: 12 },
-  hoodie:              { minPrice: 38, maxPrice: 55, typicalCost: 22 },
-  crewneck_sweatshirt: { minPrice: 35, maxPrice: 50, typicalCost: 20 },
-  tank_top:            { minPrice: 20, maxPrice: 28, typicalCost: 10 },
-  long_sleeve_tee:     { minPrice: 26, maxPrice: 36, typicalCost: 14 },
-  vneck_tshirt:        { minPrice: 22, maxPrice: 30, typicalCost: 12 },
+  unisex_tshirt:       { minPrice: 22, maxPrice: 32, typicalCost: 12,  typicalShipping: 4.75 },
+  hoodie:              { minPrice: 38, maxPrice: 55, typicalCost: 22,  typicalShipping: 7.0 },
+  crewneck_sweatshirt: { minPrice: 35, maxPrice: 50, typicalCost: 20,  typicalShipping: 6.5 },
+  tank_top:            { minPrice: 20, maxPrice: 28, typicalCost: 10,  typicalShipping: 4.75 },
+  long_sleeve_tee:     { minPrice: 26, maxPrice: 36, typicalCost: 14,  typicalShipping: 5.5 },
+  vneck_tshirt:        { minPrice: 22, maxPrice: 30, typicalCost: 12,  typicalShipping: 4.75 },
 
-  // Drinkware
-  mug_11oz:            { minPrice: 16, maxPrice: 24, typicalCost: 7 },
-  mug_15oz:            { minPrice: 18, maxPrice: 26, typicalCost: 8 },
+  // Drinkware (heavy/fragile — ships pricier than apparel)
+  mug_11oz:            { minPrice: 16, maxPrice: 24, typicalCost: 7,   typicalShipping: 5.5 },
+  mug_15oz:            { minPrice: 18, maxPrice: 26, typicalCost: 8,   typicalShipping: 6.0 },
 
   // Bags
-  tote_bag:            { minPrice: 18, maxPrice: 30, typicalCost: 12 },
+  tote_bag:            { minPrice: 18, maxPrice: 30, typicalCost: 12,  typicalShipping: 4.5 },
 
   // Wall Art
-  poster:              { minPrice: 15, maxPrice: 30, typicalCost: 8 },
-  canvas_print:        { minPrice: 45, maxPrice: 80, typicalCost: 25 },
+  poster:              { minPrice: 15, maxPrice: 30, typicalCost: 8,   typicalShipping: 5.0 },
+  canvas_print:        { minPrice: 45, maxPrice: 80, typicalCost: 25,  typicalShipping: 10.0 },
 
   // Accessories
-  phone_case:          { minPrice: 20, maxPrice: 32, typicalCost: 10 },
-  sticker:             { minPrice: 4, maxPrice: 10, typicalCost: 2 },
-  mousepad:            { minPrice: 14, maxPrice: 22, typicalCost: 7 },
+  phone_case:          { minPrice: 20, maxPrice: 32, typicalCost: 10,  typicalShipping: 4.0 },
+  sticker:             { minPrice: 4, maxPrice: 10, typicalCost: 2,    typicalShipping: 1.0 },
+  mousepad:            { minPrice: 14, maxPrice: 22, typicalCost: 7,   typicalShipping: 4.5 },
 
-  // Home
-  blanket:             { minPrice: 50, maxPrice: 85, typicalCost: 30 },
-  throw_pillow:        { minPrice: 28, maxPrice: 45, typicalCost: 15 },
+  // Home (bulky)
+  blanket:             { minPrice: 50, maxPrice: 85, typicalCost: 30,  typicalShipping: 9.0 },
+  throw_pillow:        { minPrice: 28, maxPrice: 45, typicalCost: 15,  typicalShipping: 6.5 },
 
   // Cheap bait products — dirt-cheap base costs, used as entry-point listings
-  postcard:            { minPrice: 4, maxPrice: 9,   typicalCost: 1.5 },
-  greeting_card:       { minPrice: 5, maxPrice: 10,  typicalCost: 3 },
-  fridge_magnet:       { minPrice: 6, maxPrice: 12,  typicalCost: 3.5 },
-  baby_bodysuit:       { minPrice: 16, maxPrice: 26, typicalCost: 9 },
+  postcard:            { minPrice: 4, maxPrice: 9,   typicalCost: 1.5, typicalShipping: 1.0 },
+  greeting_card:       { minPrice: 5, maxPrice: 10,  typicalCost: 3,   typicalShipping: 1.5 },
+  fridge_magnet:       { minPrice: 6, maxPrice: 12,  typicalCost: 3.5, typicalShipping: 3.0 },
+  baby_bodysuit:       { minPrice: 16, maxPrice: 26, typicalCost: 9,   typicalShipping: 4.5 },
 };
+
+const DEFAULT_TYPICAL_SHIPPING = 4.5;
 
 export interface PricingContext {
   productType: string;
   baseCost: number;
+  // Merchant-paid shipping (free-shipping model). Folded into the cost basis so
+  // the listing actually nets its target margin. Default 0 = legacy behavior
+  // (buyer-pays-shipping / shipping treated as revenue-neutral).
+  shippingCost?: number;
   nicheCompositeScore?: number;
   competitionLevel?: number;
   trendDirection?: string;
@@ -86,6 +96,8 @@ export interface PricingContext {
 export interface PricingResult {
   retailPrice: number;
   baseCost: number;
+  shippingCost: number;
+  landedCost: number;
   marginPercent: number;
   demandMultiplier: number;
   competitionAdjustment: number;
@@ -100,14 +112,21 @@ export function calculateDynamicPrice(ctx: PricingContext): PricingResult {
   const productPricing = PRODUCT_PRICING[ctx.productType];
   const minMargin = ctx.minMarginPercent ?? 30;
 
+  // Landed cost = product base cost + merchant-paid shipping. Under a
+  // free-shipping model the buyer doesn't pay shipping separately, so Printify's
+  // shipping charge is a real COGS line. Pricing against base cost alone (the
+  // old behavior) overstated margin by the whole shipping amount.
+  const shippingCost = ctx.shippingCost ?? 0;
+  const landedCost = ctx.baseCost + shippingCost;
+
   // Start from the price that nets the target margin AFTER all Etsy fees
   // (not just COGS). Previously this ignored ~18 points of fees, so a "40%"
   // listing actually cleared ~26%.
-  let costBasedPrice = priceForNetMargin(ctx.baseCost, ctx.marginPercent / 100);
+  let costBasedPrice = priceForNetMargin(landedCost, ctx.marginPercent / 100);
   // priceForNetMargin returns Infinity when the requested margin is
   // unachievable against the fee stack (>~87%). Fall back to a sane COGS
   // multiple so we never produce NaN after the .99 rounding below.
-  if (!Number.isFinite(costBasedPrice)) costBasedPrice = ctx.baseCost * 3;
+  if (!Number.isFinite(costBasedPrice)) costBasedPrice = landedCost * 3;
 
   // Demand multiplier from niche score (higher score = higher demand = premium pricing)
   let demandMultiplier = 1.0;
@@ -139,24 +158,26 @@ export function calculateDynamicPrice(ctx: PricingContext): PricingResult {
     adjustedPrice = Math.max(productPricing.minPrice, Math.min(productPricing.maxPrice, adjustedPrice));
   }
 
-  // Ensure minimum NET margin floor (after fees). Applied after the market
-  // clamp so we never knowingly publish a guaranteed-loss listing — even if
-  // that means pricing above the typical market range.
-  const minAllowedPrice = priceForNetMargin(ctx.baseCost, minMargin / 100);
+  // Ensure minimum NET margin floor (after fees) on landed cost. Applied after
+  // the market clamp so we never knowingly publish a guaranteed-loss listing —
+  // even if that means pricing above the typical market range.
+  const minAllowedPrice = priceForNetMargin(landedCost, minMargin / 100);
   if (Number.isFinite(minAllowedPrice)) adjustedPrice = Math.max(adjustedPrice, minAllowedPrice);
 
   // Round to .99 pricing (psychological pricing)
   const rounded = Math.floor(adjustedPrice) + 0.99;
   const retailPrice = Math.round(rounded * 100) / 100;
 
-  // Recalculate actual margin against the real fee stack
+  // Recalculate actual margin against the real fee stack AND landed cost
   const etsyFees = estimateEtsyFees(retailPrice);
-  const actualProfit = retailPrice - ctx.baseCost - etsyFees;
+  const actualProfit = retailPrice - landedCost - etsyFees;
   const actualMargin = retailPrice > 0 ? (actualProfit / retailPrice) * 100 : 0;
 
   return {
     retailPrice,
     baseCost: ctx.baseCost,
+    shippingCost,
+    landedCost: Math.round(landedCost * 100) / 100,
     marginPercent: Math.round(actualMargin * 10) / 10,
     demandMultiplier: Math.round(demandMultiplier * 100) / 100,
     competitionAdjustment: Math.round(competitionAdjustment * 100) / 100,
@@ -168,6 +189,21 @@ export function calculateDynamicPrice(ctx: PricingContext): PricingResult {
 
 export function getTypicalCost(productType: string): number {
   return PRODUCT_PRICING[productType]?.typicalCost ?? 15;
+}
+
+/** Merchant-paid shipping (free-shipping model) for one item of this product. */
+export function getTypicalShipping(productType: string): number {
+  return PRODUCT_PRICING[productType]?.typicalShipping ?? DEFAULT_TYPICAL_SHIPPING;
+}
+
+/**
+ * Total landed cost of goods for one item: product base cost + merchant-paid
+ * shipping when a free-shipping model is in effect. Pass includeShipping=false
+ * for a buyer-pays-shipping model (shipping is then revenue-neutral and omitted
+ * from both pricing and profit so the two stay consistent).
+ */
+export function getLandedCost(productType: string, baseCost: number, includeShipping: boolean): number {
+  return baseCost + (includeShipping ? getTypicalShipping(productType) : 0);
 }
 
 export interface TeasePricingResult {

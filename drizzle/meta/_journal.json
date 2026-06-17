@@ -57,6 +57,13 @@
       "when": 1777459200000,
       "tag": "0007_fk_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1781827200000,
+      "tag": "0008_unique_external_listing",
+      "breakpoints": true
     }
   ]
 }

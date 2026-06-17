@@ -1,8 +1,7 @@
 import type { PipelineContext, StepResult } from "../context";
-import { niches, designConcepts } from "@/lib/db/schema";
-import { eq, inArray } from "drizzle-orm";
+import { niches, designConcepts, printifyProducts, listings, settings } from "@/lib/db/schema";
+import { eq, inArray, desc } from "drizzle-orm";
 import { chatCompletion, StructuredOutputError } from "@/lib/ai/client";
-import { claudeCompletion } from "@/lib/ai/providers";
 import { DesignConceptsSchema, type DesignConcept } from "@/lib/ai/schemas";
 import { trackTextUsage } from "@/lib/ai/token-tracker";
 import { fullModeration } from "@/lib/ai/moderation";
@@ -31,10 +30,51 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     return { status: "completed", message: "Dry run: skipped concept generation" };
   }
 
-  // Get approved niches
+  const stepStartTime = Date.now();
+
+  // Read GPT model setting so the dashboard control takes effect
+  const gptModelSetting = await context.db.select().from(settings).where(eq(settings.key, "gpt_model")).get();
+  const gptModel = gptModelSetting?.value || "gpt-4o";
+
+  // Queue-aware capacity planning (auto-runs only — manual runs with specific
+  // nicheIds always process exactly what the operator asked for).
+  let nichesLimit = 0;
+  if (context.approvedNicheIds.length === 0) {
+    const TARGET_BUFFER_DAYS = 14;
+
+    const [dailySetting, maxProdSetting] = await Promise.all([
+      context.db.select().from(settings).where(eq(settings.key, "max_daily_listings")).get(),
+      context.db.select().from(settings).where(eq(settings.key, "max_products_per_design")).get(),
+    ]);
+    const dailyLimit = Math.max(1, parseInt(dailySetting?.value ?? "5") || 5);
+    const maxProductsPerDesign = Math.max(1, parseInt(maxProdSetting?.value ?? "3") || 3);
+    const targetBuffer = dailyLimit * TARGET_BUFFER_DAYS;
+
+    const [pendingProducts, pendingListings] = await Promise.all([
+      context.db.select({ id: printifyProducts.id }).from(printifyProducts).where(eq(printifyProducts.status, "created")).all(),
+      context.db.select({ id: listings.id }).from(listings).where(inArray(listings.status, ["draft", "pending_approval", "approved"])).all(),
+    ]);
+    const totalQueued = pendingProducts.length + pendingListings.length;
+
+    log("info", `[Step 03] Queue depth: ${totalQueued}/${targetBuffer} products ready (${dailyLimit}/day × ${TARGET_BUFFER_DAYS}-day buffer)`);
+
+    if (totalQueued >= targetBuffer) {
+      return {
+        status: "skipped",
+        message: `Queue already has ${totalQueued} products (${Math.floor(totalQueued / dailyLimit)} days of content at ${dailyLimit}/day). Skipping concept generation.`,
+      };
+    }
+
+    const productsNeeded = targetBuffer - totalQueued;
+    // 5 concepts/niche (conservative baseline — peak seasons may produce 6-8)
+    nichesLimit = Math.max(1, Math.ceil(Math.ceil(productsNeeded / maxProductsPerDesign) / 5));
+    log("info", `[Step 03] Need ${productsNeeded} more products — processing up to ${nichesLimit} highest-scored niches`);
+  }
+
+  // Get approved niches — best-scored first; auto-runs capped to nichesLimit
   const approvedNiches = context.approvedNicheIds.length > 0
-    ? await context.db.select().from(niches).where(inArray(niches.id, context.approvedNicheIds)).all()
-    : await context.db.select().from(niches).where(eq(niches.status, "approved")).all();
+    ? await context.db.select().from(niches).where(inArray(niches.id, context.approvedNicheIds)).orderBy(desc(niches.compositeScore)).all()
+    : await context.db.select().from(niches).where(eq(niches.status, "approved")).orderBy(desc(niches.compositeScore)).limit(nichesLimit).all();
 
   if (approvedNiches.length === 0) {
     return { status: "completed", message: "No approved niches for concept generation" };
@@ -63,23 +103,24 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   const activeSeasons = getActiveSeasons();
   const peakSeasonActive = activeSeasons.some((s) => s.scoreBoost >= 1.0);
 
-  async function processNiche(niche: typeof approvedNiches[0]): Promise<{ concepts: number; modRejects: number }> {
+  async function processNiche(niche: typeof approvedNiches[0]): Promise<{ concepts: number; modRejects: number; error?: string }> {
     let nicheConceptCount = 0;
     let nicheModRejects = 0;
 
-    await enforcebudget(0.05);
-    const safeNicheName = sanitizeForPrompt(niche.name);
+    try {
+      await enforcebudget(0.05);
+      const safeNicheName = sanitizeForPrompt(niche.name);
 
-    const seasonMatch = matchNicheToSeason(niche.name, activeSeasons);
-    const conceptCount = seasonMatch && seasonMatch.scoreBoost >= 1.0 ? 8 : peakSeasonActive ? 6 : 5;
+      const seasonMatch = matchNicheToSeason(niche.name, activeSeasons);
+      const conceptCount = seasonMatch && seasonMatch.scoreBoost >= 1.0 ? 8 : peakSeasonActive ? 6 : 5;
 
-    const [salesContext, designPerfContext] = await Promise.all([
-      formatSalesContextForConcepts(niche.name),
-      formatDesignPerformanceForConcepts(niche.name),
-    ]);
-    const seasonalContext = formatSeasonalContext();
+      const [salesContext, designPerfContext] = await Promise.all([
+        formatSalesContextForConcepts(niche.name),
+        formatDesignPerformanceForConcepts(niche.name),
+      ]);
+      const seasonalContext = formatSeasonalContext();
 
-    const prompt = `Generate ${conceptCount} print-on-demand design concepts for the niche: "${safeNicheName}"
+      const prompt = `Generate ${conceptCount} print-on-demand design concepts for the niche: "${safeNicheName}"
 
 ${salesContext}
 ${designPerfContext}
@@ -119,42 +160,63 @@ Return JSON:
   ]
 }`;
 
-    let concepts: DesignConcept[] = [];
-
-    try {
-      const useClaude = !!process.env.ANTHROPIC_API_KEY;
+      let concepts: DesignConcept[] = [];
       const MAX_DIVERSITY_RETRIES = 1;
+      // gpt-4o with strict structured outputs occasionally returns a valid but
+      // EMPTY {"concepts": []} — fast and without throwing. Retry those a couple
+      // times with a firmer instruction before giving up, so one transient empty
+      // completion doesn't stall the whole pipeline at step 3.
+      const MAX_EMPTY_RETRIES = 2;
+      let emptyRetries = 0;
+      let lastCallMeta = "";
 
       for (let attempt = 0; attempt <= MAX_DIVERSITY_RETRIES; attempt++) {
-        const attemptPrompt = attempt === 0
-          ? prompt
-          : `${prompt}\n\nIMPORTANT: Your previous attempt returned only "${Array.from(new Set(concepts.map((c) => c.design_type)))[0] ?? "one"}" design types. You MUST mix at least 2 different design_type values. Do not return all of one type.`;
+        let attemptPrompt = prompt;
+        if (emptyRetries > 0 && concepts.length === 0) {
+          attemptPrompt = `${prompt}\n\nIMPORTANT: You MUST return ${conceptCount} fully-populated concept objects in the "concepts" array. Returning an empty array is not acceptable.`;
+        } else if (attempt > 0) {
+          attemptPrompt = `${prompt}\n\nIMPORTANT: Your previous attempt returned only "${Array.from(new Set(concepts.map((c) => c.design_type)))[0] ?? "one"}" design types. You MUST mix at least 2 different design_type values. Do not return all of one type.`;
+        }
 
-        const result = useClaude
-          ? await claudeCompletion(attemptPrompt, {
-              systemPrompt: SYSTEM_PROMPT,
-              maxTokens: 4000,
-              temperature: 0.65,
-              schema: DesignConceptsSchema,
-            })
-          : await chatCompletion(attemptPrompt, {
-              systemPrompt: SYSTEM_PROMPT,
-              maxTokens: 4000,
-              temperature: 0.65,
-              schema: DesignConceptsSchema,
-              schemaName: "design_concepts",
-            });
+        log("info", `[Step 03] Calling AI for concept generation: niche="${niche.name}", attempt=${attempt + 1}, model=${gptModel}`);
 
+        const callStart = Date.now();
+        const result = await chatCompletion(attemptPrompt, {
+          systemPrompt: SYSTEM_PROMPT,
+          model: gptModel,
+          maxTokens: 4000,
+          temperature: 0.65,
+          schema: DesignConceptsSchema,
+          schemaName: "design_concepts",
+        });
+        const callDuration = Date.now() - callStart;
+
+        const provider = result.model.startsWith("claude") ? "anthropic" : "openai";
         await trackTextUsage({
           model: result.model,
           operation: "concept_generation",
           inputTokens: result.inputTokens,
           outputTokens: result.outputTokens,
           pipelineRunId: context.pipelineRunId,
-          provider: useClaude ? "anthropic" : "openai",
+          provider,
         });
 
         concepts = result.parsed?.concepts ?? [];
+        lastCallMeta = `model: ${result.model}, ${callDuration}ms, tokens: ${result.inputTokens}/${result.outputTokens}`;
+        log("info", `[Step 03] AI returned ${concepts.length} concepts for "${niche.name}" (${lastCallMeta})`);
+
+        if (concepts.length === 0) {
+          // outputTokens === 0 means the model returned nothing at all (request
+          // likely rejected silently or refused); >0 means it ran but produced []
+          if (emptyRetries < MAX_EMPTY_RETRIES) {
+            emptyRetries++;
+            log("warn", `[Step 03] Empty concepts for "${niche.name}" (${lastCallMeta}) — retry ${emptyRetries}/${MAX_EMPTY_RETRIES}`);
+            attempt--; // don't let an empty response burn a diversity-retry slot
+            continue;
+          }
+          log("error", `[Step 03] AI returned EMPTY concepts for "${niche.name}" after ${emptyRetries + 1} attempts (${lastCallMeta}) — likely API/model issue`);
+          return { concepts: 0, modRejects: 0, error: `AI returned 0 concepts after ${emptyRetries + 1} attempts (${lastCallMeta})` };
+        }
 
         const designTypes = new Set(concepts.map((c) => c.design_type));
         if (designTypes.size >= 2 || concepts.length < 3) break;
@@ -215,41 +277,79 @@ Return JSON:
         nicheConceptCount++;
       }
     } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
       if (error instanceof StructuredOutputError) {
-        log("error", `[Step 03] Concept schema validation failed for niche "${niche.name}"`, {
+        log("error", `[Step 03] Concept schema validation failed for niche "${niche.name}": ${msg}`, {
           schemaName: error.schemaName,
           issues: error.zodIssues,
         });
       } else {
-        log("error", `[Step 03] Concept generation failed for niche "${niche.name}"`, {
-          error: error instanceof Error ? error.message : String(error),
+        log("error", `[Step 03] Concept generation failed for niche "${niche.name}": ${msg}`, {
+          error: msg,
+          stack: error instanceof Error ? error.stack : undefined,
         });
       }
+      return { concepts: 0, modRejects: 0, error: msg };
     }
 
     return { concepts: nicheConceptCount, modRejects: nicheModRejects };
   }
 
   // Process niches in parallel batches
+  const nicheErrors: string[] = [];
+
   for (let i = 0; i < viableNiches.length; i += NICHE_BATCH_SIZE) {
     const batch = viableNiches.slice(i, i + NICHE_BATCH_SIZE);
     const results = await Promise.allSettled(batch.map(processNiche));
 
-    for (const result of results) {
+    for (let j = 0; j < results.length; j++) {
+      const result = results[j];
       if (result.status === "fulfilled") {
         totalConcepts += result.value.concepts;
         moderationRejects += result.value.modRejects;
+        if (result.value.error) {
+          nicheErrors.push(`"${batch[j].name}": ${result.value.error}`);
+        }
       } else {
-        log("error", `[Step 03] Batch niche processing failed`, {
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        const errMsg = result.reason instanceof Error ? result.reason.message : String(result.reason);
+        nicheErrors.push(`"${batch[j].name}": ${errMsg}`);
+        log("error", `[Step 03] Niche processing failed for "${batch[j].name}": ${errMsg}`, {
+          error: errMsg,
+          stack: result.reason instanceof Error ? result.reason.stack : undefined,
         });
       }
     }
   }
 
+  const errorSuffix = nicheErrors.length > 0
+    ? ` — ERRORS: ${nicheErrors.join("; ")}`
+    : "";
+
+  const stepDuration = Date.now() - stepStartTime;
+
+  // If we had viable niches but produced zero concepts, FAIL the step so the
+  // pipeline halts visibly instead of silently marching downstream with nothing.
+  // Previously this required nicheErrors.length > 0, which let the "AI returns
+  // empty array without throwing" case slip through as a silent success.
+  if (totalConcepts === 0 && viableNiches.length > 0) {
+    const diagnosis = nicheErrors.length > 0
+      ? `Errors: ${nicheErrors.join("; ")}`
+      : `No explicit errors caught — AI may have returned empty results. Step took ${stepDuration}ms (under 5s suggests API didn't execute properly).`;
+    log("error", `[Step 03] ZERO concepts from ${viableNiches.length} viable niches in ${stepDuration}ms. ${diagnosis}`);
+    return {
+      status: "failed",
+      message: `Concept generation produced 0 concepts from ${viableNiches.length} niches — ${nicheErrors.length > 0 ? nicheErrors.join("; ") : "AI returned empty results (check API key and model settings)"}`,
+      data: { totalConcepts: 0, moderationRejects, nichesProcessed: viableNiches.length, nichesSkippedForFailures, errors: nicheErrors, durationMs: stepDuration },
+    };
+  }
+
+  if (stepDuration < 5000 && viableNiches.length > 0) {
+    log("warn", `[Step 03] Completed in ${stepDuration}ms — suspiciously fast for ${viableNiches.length} niches. AI calls may not be executing properly.`);
+  }
+
   return {
     status: "completed",
-    message: `Generated ${totalConcepts} concepts across ${viableNiches.length} niches (${moderationRejects} rejected by moderation, ${nichesSkippedForFailures} niches skipped for high image rejection rate)`,
-    data: { totalConcepts, moderationRejects, nichesProcessed: viableNiches.length, nichesSkippedForFailures },
+    message: `Generated ${totalConcepts} concepts across ${viableNiches.length} niches (${moderationRejects} rejected by moderation, ${nichesSkippedForFailures} niches skipped for high image rejection rate)${errorSuffix}`,
+    data: { totalConcepts, moderationRejects, nichesProcessed: viableNiches.length, nichesSkippedForFailures, errors: nicheErrors, durationMs: stepDuration },
   };
 }

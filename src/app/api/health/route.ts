@@ -8,11 +8,6 @@ export const dynamic = "force-dynamic";
 
 type CheckStatus = "ok" | "warning" | "error" | "configured" | "missing";
 
-function envCheck(...vars: string[]): { status: CheckStatus; detail?: string } {
-  const missing = vars.filter((v) => !process.env[v]);
-  if (missing.length === 0) return { status: "configured" };
-  return { status: "missing", detail: `missing: ${missing.join(", ")}` };
-}
 
 export async function GET() {
   const checks: Record<string, { status: CheckStatus; detail?: string }> = {};
@@ -80,13 +75,15 @@ export async function GET() {
   const envResult = validateEnv();
   checks.env = envResult.valid
     ? { status: "ok" }
-    : { status: "error", detail: `missing: ${envResult.missing.join(", ")}` };
+    : { status: "error", detail: `${envResult.missing.length} required variable(s) missing` };
 
-  // Per-service detail for quick triage
-  checks.openai = envCheck("OPENAI_API_KEY");
-  checks.printify = envCheck("PRINTIFY_API_TOKEN", "PRINTIFY_SHOP_ID");
-  checks.etsy = envCheck("ETSY_CLIENT_ID", "ETSY_CLIENT_SECRET", "ETSY_REFRESH_TOKEN");
-  checks.blobStorage = envCheck("BLOB_READ_WRITE_TOKEN");
+  // Per-service integration status (configured vs missing — never leak var names)
+  const integrationStatus = (configured: boolean) =>
+    ({ status: configured ? "configured" as CheckStatus : "missing" as CheckStatus });
+  checks.openai = integrationStatus(!!process.env.OPENAI_API_KEY);
+  checks.printify = integrationStatus(!!process.env.PRINTIFY_API_TOKEN && !!process.env.PRINTIFY_SHOP_ID);
+  checks.etsy = integrationStatus(!!process.env.ETSY_CLIENT_ID && !!process.env.ETSY_CLIENT_SECRET && !!process.env.ETSY_REFRESH_TOKEN);
+  checks.blobStorage = integrationStatus(!!process.env.BLOB_READ_WRITE_TOKEN);
 
   const hasError = Object.values(checks).some((c) => c.status === "error" || c.status === "missing");
   const hasWarning = Object.values(checks).some((c) => c.status === "warning");

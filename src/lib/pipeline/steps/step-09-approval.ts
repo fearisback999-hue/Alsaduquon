@@ -1,5 +1,5 @@
 import type { PipelineContext, StepResult } from "../context";
-import { listings, approvalQueueEntries } from "@/lib/db/schema";
+import { listings, approvalQueueEntries, settings } from "@/lib/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import { evaluateForAutoApproval } from "@/lib/pipeline/auto-approve";
 import { log } from "@/lib/logger";
@@ -19,6 +19,17 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     return { status: "completed", message: "No listings pending approval", data: { requiresApproval: false } };
   }
 
+  // Honor the approval_mode setting. In "manual" mode (the safe default), EVERY
+  // listing goes to the manual queue — auto-approval is never even evaluated, so
+  // nothing publishes to the live shop without a human OK. Previously this
+  // setting was ignored and listings could auto-publish against the operator's
+  // stated intent.
+  const approvalModeSetting = await context.db.select().from(settings).where(eq(settings.key, "approval_mode")).get();
+  const approvalMode = approvalModeSetting?.value === "auto" ? "auto" : "manual";
+  if (approvalMode === "manual") {
+    log("info", "[Step 09] approval_mode=manual — routing all listings to manual review (auto-approval skipped)");
+  }
+
   let autoApproved = 0;
   let queued = 0;
 
@@ -35,7 +46,11 @@ export default async function execute(context: PipelineContext): Promise<StepRes
       .get();
     if (existing) continue;
 
-    const autoResult = await evaluateForAutoApproval(listing.id);
+    // In manual mode, skip the auto-approval evaluation entirely — force the
+    // listing to the manual queue regardless of its quality score.
+    const autoResult = approvalMode === "manual"
+      ? { approved: false, confidence: 0, reasons: ["approval_mode is manual"], blockedBy: "approval_mode" as string | undefined }
+      : await evaluateForAutoApproval(listing.id);
 
     if (autoResult.approved) {
       await context.db.insert(approvalQueueEntries).values({
@@ -58,6 +73,11 @@ export default async function execute(context: PipelineContext): Promise<StepRes
       autoApproved++;
       log("info", `[Step 09] Auto-approved: "${listing.title}" [${listing.platform}] (confidence: ${(autoResult.confidence * 100).toFixed(0)}%)`);
     } else {
+      // Surface the REAL reason (training wheels, approval_mode, vision quality,
+      // or low confidence) rather than always blaming a "low threshold".
+      const reasonPrefix = autoResult.blockedBy
+        ? `Manual review (${autoResult.blockedBy})`
+        : `Below auto-approval threshold (${(autoResult.confidence * 100).toFixed(0)}%)`;
       await context.db.insert(approvalQueueEntries).values({
         listingId: listing.id,
         batchNumber: currentBatch,
@@ -65,7 +85,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
         mode: "manual",
         status: "pending",
         autoScore: autoResult.confidence,
-        feedback: `Below auto-approval threshold (${(autoResult.confidence * 100).toFixed(0)}%): ${autoResult.reasons.join(", ")}`,
+        feedback: `${reasonPrefix}: ${autoResult.reasons.join(", ")}`,
       });
 
       queued++;

@@ -132,7 +132,7 @@ export const etsyStrategy: PlatformStrategy = {
       descriptionMaxWords: 600,
       platformName: "Etsy",
       seoGuidance:
-        "Etsy search favors long-tail keywords in titles. Front-load the most important keywords. Use all 13 tags with unique phrases. Repeat key terms between title, tags, and first paragraph of description.",
+        "CRITICAL: The first 70 characters of the title are what shows on mobile (70%+ of Etsy purchases). Front-load your primary keyword + product type in the first 70 chars. The remaining 71-140 chars are bonus keywords for search indexing but most buyers never see them. Use all 13 tags with unique long-tail phrases. Repeat key terms between title, tags, and first paragraph of description.",
     };
   },
 };
