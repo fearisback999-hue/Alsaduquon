@@ -187,6 +187,17 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     return { status: "completed", message: "Dry run: skipped image generation" };
   }
 
+  // Pre-flight: verify blob storage is reachable before spending money on images.
+  try {
+    await uploadImageBuffer(Buffer.from("neopod-preflight"), "preflight/healthcheck.txt", "text/plain");
+  } catch (blobErr) {
+    const msg = blobErr instanceof Error ? blobErr.message : String(blobErr);
+    return {
+      status: "failed",
+      message: `Blob storage unavailable — fix BLOB_READ_WRITE_TOKEN before retrying. Error: ${msg}`,
+    };
+  }
+
   // Pick up both fresh concepts ("moderated") AND previously-failed ones so
   // the pipeline self-heals after transient errors (rate limits, outages).
   // Failed concepts get up to MAX_RUN_RETRIES additional pipeline runs before
@@ -264,6 +275,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
   const recordError = (msg: string) => { if (errorSamples.length < 5) errorSamples.push(msg); };
   let fluxRateLimited = false;
   let dalleFailoverCount = 0;
+  let consecutiveUploadErrors = 0;
 
   for (const concept of concepts) {
     let imageGenerated = false;
@@ -280,23 +292,12 @@ export default async function execute(context: PipelineContext): Promise<StepRes
       await enforcebudget(estimatedStepCost);
 
       try {
-        // Sequential for Flux (free-tier burst limit = 1), parallel for DALL-E.
-        let candidates: RawCandidate[];
-        if (attemptUseFlux) {
-          candidates = [];
-          for (let ci = 0; ci < candidateCount; ci++) {
-            if (ci > 0) await new Promise(r => setTimeout(r, 10_000));
-            candidates.push(await generateOneCandidate(concept, currentPrompt, attempt, String.fromCharCode(97 + ci), true));
-          }
-        } else {
-          candidates = await Promise.all(
-            Array.from({ length: candidateCount }, (_, i) =>
-              generateOneCandidate(concept, currentPrompt, attempt, String.fromCharCode(97 + i), false),
-            ),
-          );
-        }
-
-        for (const c of candidates) {
+        // Generate candidates sequentially, tracking cost per-candidate immediately
+        // so the budget stays accurate even if a later blob upload fails.
+        const candidates: RawCandidate[] = [];
+        for (let ci = 0; ci < candidateCount; ci++) {
+          if (ci > 0 && attemptUseFlux) await new Promise(r => setTimeout(r, 10_000));
+          const c = await generateOneCandidate(concept, currentPrompt, attempt, String.fromCharCode(97 + ci), attemptUseFlux);
           await trackImageUsage({
             model: attemptGenerator,
             operation: "image_generation",
@@ -306,7 +307,9 @@ export default async function execute(context: PipelineContext): Promise<StepRes
             costPreRecorded: false,
           });
           totalCost += attemptCost;
+          candidates.push(c);
         }
+        consecutiveUploadErrors = 0;
 
         // Score all candidates in parallel
         const scoreResults = await Promise.all(
@@ -506,6 +509,22 @@ export default async function execute(context: PipelineContext): Promise<StepRes
 
         const msg = error instanceof Error ? error.message : String(error);
         log("warn", `[Step 04] Image attempt ${attempt}/${maxAttempts} failed for concept "${concept.title}": ${msg}`);
+
+        // Circuit breaker: if blob/upload keeps failing, stop immediately
+        // to avoid burning money on images that can never be stored.
+        const isUploadError = msg.includes("Vercel Blob") || msg.includes("Access denied") || msg.includes("put()");
+        if (isUploadError) {
+          consecutiveUploadErrors++;
+          if (consecutiveUploadErrors >= 3) {
+            return {
+              status: "failed",
+              message: `Blob storage failing repeatedly — stopped to prevent wasted costs. Fix BLOB_READ_WRITE_TOKEN. Generated ${generated} images before failure (cost: $${totalCost.toFixed(2)})`,
+              cost: totalCost,
+              data: { generated, failed, qualityRejected, totalCost, generator: generatorName, errors: [...errorSamples, msg] },
+            };
+          }
+        }
+
         if (attempt === maxAttempts) {
           recordError(`"${concept.title}": ${msg}`);
           await context.db.insert(generatedImages).values({
@@ -526,6 +545,7 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     }
 
     if (imageGenerated) {
+      consecutiveUploadErrors = 0;
       await new Promise((resolve) => setTimeout(resolve, (useFlux && !fluxRateLimited) ? 3000 : 12000));
     }
   }
