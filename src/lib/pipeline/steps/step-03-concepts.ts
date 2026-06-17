@@ -162,11 +162,21 @@ Return JSON:
 
       let concepts: DesignConcept[] = [];
       const MAX_DIVERSITY_RETRIES = 1;
+      // gpt-4o with strict structured outputs occasionally returns a valid but
+      // EMPTY {"concepts": []} — fast and without throwing. Retry those a couple
+      // times with a firmer instruction before giving up, so one transient empty
+      // completion doesn't stall the whole pipeline at step 3.
+      const MAX_EMPTY_RETRIES = 2;
+      let emptyRetries = 0;
+      let lastCallMeta = "";
 
       for (let attempt = 0; attempt <= MAX_DIVERSITY_RETRIES; attempt++) {
-        const attemptPrompt = attempt === 0
-          ? prompt
-          : `${prompt}\n\nIMPORTANT: Your previous attempt returned only "${Array.from(new Set(concepts.map((c) => c.design_type)))[0] ?? "one"}" design types. You MUST mix at least 2 different design_type values. Do not return all of one type.`;
+        let attemptPrompt = prompt;
+        if (emptyRetries > 0 && concepts.length === 0) {
+          attemptPrompt = `${prompt}\n\nIMPORTANT: You MUST return ${conceptCount} fully-populated concept objects in the "concepts" array. Returning an empty array is not acceptable.`;
+        } else if (attempt > 0) {
+          attemptPrompt = `${prompt}\n\nIMPORTANT: Your previous attempt returned only "${Array.from(new Set(concepts.map((c) => c.design_type)))[0] ?? "one"}" design types. You MUST mix at least 2 different design_type values. Do not return all of one type.`;
+        }
 
         log("info", `[Step 03] Calling AI for concept generation: niche="${niche.name}", attempt=${attempt + 1}, model=${gptModel}`);
 
@@ -192,11 +202,20 @@ Return JSON:
         });
 
         concepts = result.parsed?.concepts ?? [];
-        log("info", `[Step 03] AI returned ${concepts.length} concepts for "${niche.name}" (model: ${result.model}, ${callDuration}ms)`);
+        lastCallMeta = `model: ${result.model}, ${callDuration}ms, tokens: ${result.inputTokens}/${result.outputTokens}`;
+        log("info", `[Step 03] AI returned ${concepts.length} concepts for "${niche.name}" (${lastCallMeta})`);
 
         if (concepts.length === 0) {
-          log("error", `[Step 03] AI returned EMPTY concepts array for "${niche.name}" — likely API misconfiguration or model issue (took ${callDuration}ms, tokens in: ${result.inputTokens}, out: ${result.outputTokens})`);
-          return { concepts: 0, modRejects: 0, error: `AI returned 0 concepts (model: ${result.model}, ${callDuration}ms, tokens: ${result.inputTokens}/${result.outputTokens})` };
+          // outputTokens === 0 means the model returned nothing at all (request
+          // likely rejected silently or refused); >0 means it ran but produced []
+          if (emptyRetries < MAX_EMPTY_RETRIES) {
+            emptyRetries++;
+            log("warn", `[Step 03] Empty concepts for "${niche.name}" (${lastCallMeta}) — retry ${emptyRetries}/${MAX_EMPTY_RETRIES}`);
+            attempt--; // don't let an empty response burn a diversity-retry slot
+            continue;
+          }
+          log("error", `[Step 03] AI returned EMPTY concepts for "${niche.name}" after ${emptyRetries + 1} attempts (${lastCallMeta}) — likely API/model issue`);
+          return { concepts: 0, modRejects: 0, error: `AI returned 0 concepts after ${emptyRetries + 1} attempts (${lastCallMeta})` };
         }
 
         const designTypes = new Set(concepts.map((c) => c.design_type));
