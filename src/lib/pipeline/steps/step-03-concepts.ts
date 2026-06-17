@@ -30,6 +30,12 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     return { status: "completed", message: "Dry run: skipped concept generation" };
   }
 
+  const stepStartTime = Date.now();
+
+  // Read GPT model setting so the dashboard control takes effect
+  const gptModelSetting = await context.db.select().from(settings).where(eq(settings.key, "gpt_model")).get();
+  const gptModel = gptModelSetting?.value || "gpt-4o";
+
   // Queue-aware capacity planning (auto-runs only — manual runs with specific
   // nicheIds always process exactly what the operator asked for).
   let nichesLimit = 0;
@@ -162,15 +168,18 @@ Return JSON:
           ? prompt
           : `${prompt}\n\nIMPORTANT: Your previous attempt returned only "${Array.from(new Set(concepts.map((c) => c.design_type)))[0] ?? "one"}" design types. You MUST mix at least 2 different design_type values. Do not return all of one type.`;
 
-        log("info", `[Step 03] Calling AI for concept generation: niche="${niche.name}", attempt=${attempt + 1}`);
+        log("info", `[Step 03] Calling AI for concept generation: niche="${niche.name}", attempt=${attempt + 1}, model=${gptModel}`);
 
+        const callStart = Date.now();
         const result = await chatCompletion(attemptPrompt, {
           systemPrompt: SYSTEM_PROMPT,
+          model: gptModel,
           maxTokens: 4000,
           temperature: 0.65,
           schema: DesignConceptsSchema,
           schemaName: "design_concepts",
         });
+        const callDuration = Date.now() - callStart;
 
         const provider = result.model.startsWith("claude") ? "anthropic" : "openai";
         await trackTextUsage({
@@ -183,7 +192,12 @@ Return JSON:
         });
 
         concepts = result.parsed?.concepts ?? [];
-        log("info", `[Step 03] AI returned ${concepts.length} concepts for "${niche.name}" (model: ${result.model})`);
+        log("info", `[Step 03] AI returned ${concepts.length} concepts for "${niche.name}" (model: ${result.model}, ${callDuration}ms)`);
+
+        if (concepts.length === 0) {
+          log("error", `[Step 03] AI returned EMPTY concepts array for "${niche.name}" — likely API misconfiguration or model issue (took ${callDuration}ms, tokens in: ${result.inputTokens}, out: ${result.outputTokens})`);
+          return { concepts: 0, modRejects: 0, error: `AI returned 0 concepts (model: ${result.model}, ${callDuration}ms, tokens: ${result.inputTokens}/${result.outputTokens})` };
+        }
 
         const designTypes = new Set(concepts.map((c) => c.design_type));
         if (designTypes.size >= 2 || concepts.length < 3) break;
@@ -292,23 +306,31 @@ Return JSON:
     ? ` — ERRORS: ${nicheErrors.join("; ")}`
     : "";
 
-  // If every niche errored out (not moderation rejections — actual API/code
-  // failures) and we produced nothing, FAIL the step so the pipeline halts
-  // visibly instead of silently marching downstream with 0 concepts. A
-  // misconfigured/quota-exhausted AI provider should stop the run loudly.
-  const allFailedWithErrors = totalConcepts === 0 && viableNiches.length > 0 && nicheErrors.length > 0;
-  if (allFailedWithErrors) {
-    log("error", `[Step 03] ALL ${viableNiches.length} niches failed concept generation. Errors: ${nicheErrors.join("; ")}`);
+  const stepDuration = Date.now() - stepStartTime;
+
+  // If we had viable niches but produced zero concepts, FAIL the step so the
+  // pipeline halts visibly instead of silently marching downstream with nothing.
+  // Previously this required nicheErrors.length > 0, which let the "AI returns
+  // empty array without throwing" case slip through as a silent success.
+  if (totalConcepts === 0 && viableNiches.length > 0) {
+    const diagnosis = nicheErrors.length > 0
+      ? `Errors: ${nicheErrors.join("; ")}`
+      : `No explicit errors caught — AI may have returned empty results. Step took ${stepDuration}ms (under 5s suggests API didn't execute properly).`;
+    log("error", `[Step 03] ZERO concepts from ${viableNiches.length} viable niches in ${stepDuration}ms. ${diagnosis}`);
     return {
       status: "failed",
-      message: `Concept generation failed for all ${viableNiches.length} niches${errorSuffix}`,
-      data: { totalConcepts: 0, moderationRejects, nichesProcessed: viableNiches.length, nichesSkippedForFailures, errors: nicheErrors },
+      message: `Concept generation produced 0 concepts from ${viableNiches.length} niches — ${nicheErrors.length > 0 ? nicheErrors.join("; ") : "AI returned empty results (check API key and model settings)"}`,
+      data: { totalConcepts: 0, moderationRejects, nichesProcessed: viableNiches.length, nichesSkippedForFailures, errors: nicheErrors, durationMs: stepDuration },
     };
+  }
+
+  if (stepDuration < 5000 && viableNiches.length > 0) {
+    log("warn", `[Step 03] Completed in ${stepDuration}ms — suspiciously fast for ${viableNiches.length} niches. AI calls may not be executing properly.`);
   }
 
   return {
     status: "completed",
     message: `Generated ${totalConcepts} concepts across ${viableNiches.length} niches (${moderationRejects} rejected by moderation, ${nichesSkippedForFailures} niches skipped for high image rejection rate)${errorSuffix}`,
-    data: { totalConcepts, moderationRejects, nichesProcessed: viableNiches.length, nichesSkippedForFailures, errors: nicheErrors },
+    data: { totalConcepts, moderationRejects, nichesProcessed: viableNiches.length, nichesSkippedForFailures, errors: nicheErrors, durationMs: stepDuration },
   };
 }
