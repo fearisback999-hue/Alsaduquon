@@ -1,0 +1,200 @@
+import type { PlatformStrategy, PlatformListingResult, ListingInput, PlatformSEOHints, PlatformOrderData, PlatformMetricsData } from "./types";
+import { ExternalAPIError } from "@/lib/errors";
+import { withRetry } from "@/lib/retry";
+import { rateLimit } from "@/lib/external/rate-limiter";
+
+function getBaseUrl(): string {
+  return `https://${process.env.SHOPIFY_STORE_URL}/admin/api/2024-01`;
+}
+
+async function shopifyFetch(path: string, options?: RequestInit): Promise<unknown> {
+  await rateLimit("shopify");
+
+  const response = await fetch(`${getBaseUrl()}${path}`, {
+    ...options,
+    headers: {
+      "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN!,
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new ExternalAPIError("Shopify", response.status, body);
+  }
+
+  if (response.status === 204) return null;
+  return response.json();
+}
+
+export const shopifyStrategy: PlatformStrategy = {
+  id: "shopify",
+  name: "Shopify",
+
+  isConfigured() {
+    return !!(process.env.SHOPIFY_STORE_URL && process.env.SHOPIFY_ACCESS_TOKEN);
+  },
+
+  async createDraftListing(data: ListingInput): Promise<PlatformListingResult> {
+    const result = await withRetry(() =>
+      shopifyFetch("/products.json", {
+        method: "POST",
+        body: JSON.stringify({
+          product: {
+            title: data.title.slice(0, 255),
+            body_html: data.description,
+            vendor: "NeoPOD",
+            product_type: data.productType,
+            tags: data.tags.join(", "),
+            variants: [{ price: String(data.price) }],
+            status: "draft",
+          },
+        }),
+      }),
+    ) as { product: { id: number; status: string } };
+
+    return {
+      externalId: String(result.product.id),
+      url: `https://${process.env.SHOPIFY_STORE_URL}/admin/products/${result.product.id}`,
+      state: "draft",
+    };
+  },
+
+  async uploadImages(externalId: string, imageUrls: string[]): Promise<void> {
+    for (const url of imageUrls) {
+      await withRetry(() =>
+        shopifyFetch(`/products/${externalId}/images.json`, {
+          method: "POST",
+          body: JSON.stringify({ image: { src: url } }),
+        }),
+      );
+    }
+  },
+
+  async publishListing(externalId: string): Promise<void> {
+    await withRetry(() =>
+      shopifyFetch(`/products/${externalId}.json`, {
+        method: "PUT",
+        body: JSON.stringify({ product: { id: Number(externalId), status: "active" } }),
+      }),
+    );
+  },
+
+  async deactivateListing(externalId: string): Promise<void> {
+    await withRetry(() =>
+      shopifyFetch(`/products/${externalId}.json`, {
+        method: "PUT",
+        body: JSON.stringify({ product: { id: Number(externalId), status: "draft" } }),
+      }),
+    );
+  },
+
+  async updateTitle(externalId: string, title: string): Promise<void> {
+    await withRetry(() =>
+      shopifyFetch(`/products/${externalId}.json`, {
+        method: "PUT",
+        body: JSON.stringify({ product: { id: Number(externalId), title: title.slice(0, 255) } }),
+      }),
+    );
+  },
+
+  async updatePrice(externalId: string, price: number): Promise<void> {
+    // Shopify prices live on variants, not products. Fetch the product first
+    // to get its primary variant id, then update the variant.
+    const product = (await withRetry(() => shopifyFetch(`/products/${externalId}.json`))) as {
+      product: { variants: Array<{ id: number }> };
+    };
+    const variantId = product.product.variants[0]?.id;
+    if (!variantId) throw new ExternalAPIError("Shopify", 404, "No variant found for product");
+    await withRetry(() =>
+      shopifyFetch(`/variants/${variantId}.json`, {
+        method: "PUT",
+        body: JSON.stringify({ variant: { id: variantId, price: String(price) } }),
+      }),
+    );
+  },
+
+  async fetchListingMetrics(externalIds: string[]): Promise<PlatformMetricsData[]> {
+    // Shopify basic plan doesn't expose a views/analytics API.
+    // Fetch product data and return views as 0; order-based metrics are
+    // computed separately from the orders table in the sync function.
+    const results: PlatformMetricsData[] = [];
+
+    // Fetch products in batches using the ids parameter
+    const batchSize = 50;
+    for (let i = 0; i < externalIds.length; i += batchSize) {
+      const batch = externalIds.slice(i, i + batchSize);
+      const idsParam = batch.join(",");
+      const data = (await withRetry(() =>
+        shopifyFetch(`/products.json?ids=${idsParam}&fields=id`),
+      )) as { products: Array<{ id: number }> };
+
+      for (const product of data.products) {
+        results.push({
+          externalListingId: String(product.id),
+          views: 0,
+          favorites: 0,
+        });
+      }
+    }
+
+    return results;
+  },
+
+  async fetchRecentOrders(sinceDaysAgo = 1): Promise<PlatformOrderData[]> {
+    const since = new Date(Date.now() - sinceDaysAgo * 24 * 60 * 60 * 1000).toISOString();
+    const data = (await withRetry(() =>
+      shopifyFetch(`/orders.json?created_at_min=${since}&status=any&limit=100`),
+    )) as { orders: Array<{
+      id: number;
+      financial_status: string;
+      line_items: Array<{ product_id: number; quantity: number; price: string }>;
+      created_at: string;
+      shipping_address?: { country?: string };
+    }> };
+
+    const result: PlatformOrderData[] = [];
+    for (const order of data.orders) {
+      for (const item of order.line_items) {
+        const status = order.financial_status === "paid" ? "processing" as const
+          : order.financial_status === "refunded" ? "refunded" as const
+          : "new" as const;
+        result.push({
+          externalOrderId: String(order.id),
+          externalListingId: String(item.product_id),
+          status,
+          quantity: item.quantity,
+          revenue: parseFloat(item.price) * item.quantity,
+          customerRegion: order.shipping_address?.country,
+          orderedAt: order.created_at,
+        });
+      }
+    }
+    return result;
+  },
+
+  getListingFee() {
+    return 0;
+  },
+
+  getMaxTitleLength() {
+    return 255;
+  },
+
+  getMaxTags() {
+    return 250;
+  },
+
+  getSEOHints(): PlatformSEOHints {
+    return {
+      titleMaxLength: 255,
+      maxTags: 250,
+      tagMaxLength: 255,
+      descriptionMaxWords: 800,
+      platformName: "Shopify",
+      seoGuidance:
+        "Focus on Google SEO. Use product-focused keywords. Include brand name. Longer descriptions with feature bullets perform well.",
+    };
+  },
+};
