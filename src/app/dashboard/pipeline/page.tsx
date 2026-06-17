@@ -139,6 +139,7 @@ export default function PipelinePage() {
   const [resuming, setResuming] = useState(false);
   const [autopilotEnabled, setAutopilotEnabled] = useState<boolean | null>(null);
   const [togglingAutopilot, setTogglingAutopilot] = useState(false);
+  const [resettingFailed, setResettingFailed] = useState(false);
   const [runsLimit, setRunsLimit] = useState(RUNS_PAGE_SIZE);
   const toast = useToast();
   const prevRunStatus = useRef<string | null>(null);
@@ -230,6 +231,25 @@ export default function PipelinePage() {
     }
   }
 
+  async function resetFailed() {
+    if (resettingFailed) return;
+    setResettingFailed(true);
+    try {
+      const res = await fetch("/api/pipeline/reset-failed", { method: "POST" });
+      const result = await res.json();
+      if (res.ok) {
+        toast.success(result.message);
+      } else {
+        toast.error(result.error ?? "Reset failed");
+      }
+    } catch {
+      toast.error("Network error resetting failed concepts");
+    } finally {
+      setResettingFailed(false);
+      loadData();
+    }
+  }
+
   useEffect(() => { loadData(); }, [loadData]);
 
   // Auto-refresh every 3s while a run is active
@@ -306,6 +326,17 @@ export default function PipelinePage() {
               leftIcon={resuming ? undefined : <RotateCcw className="h-4 w-4" />}
             >
               {resuming ? "Resuming…" : "Resume run"}
+            </Button>
+          )}
+          {run?.status === "failed" && (
+            <Button
+              variant="secondary"
+              onClick={resetFailed}
+              disabled={resettingFailed}
+              loading={resettingFailed}
+              leftIcon={resettingFailed ? undefined : <RotateCcw className="h-4 w-4" />}
+            >
+              {resettingFailed ? "Resetting…" : "Retry failed"}
             </Button>
           )}
           <Button

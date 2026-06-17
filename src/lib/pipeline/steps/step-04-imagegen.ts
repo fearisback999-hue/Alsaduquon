@@ -1,6 +1,6 @@
 import type { PipelineContext, StepResult } from "../context";
 import { designConcepts, generatedImages, settings } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { analyzeImage } from "@/lib/ai/client";
 import { generateImageFlux } from "@/lib/ai/providers";
 import { ImageQualitySchema, type ImageQuality } from "@/lib/ai/schemas";
@@ -187,11 +187,49 @@ export default async function execute(context: PipelineContext): Promise<StepRes
     return { status: "completed", message: "Dry run: skipped image generation" };
   }
 
-  const concepts = await context.db
+  // Pick up both fresh concepts ("moderated") AND previously-failed ones so
+  // the pipeline self-heals after transient errors (rate limits, outages).
+  // Failed concepts get up to MAX_RUN_RETRIES additional pipeline runs before
+  // being permanently abandoned.
+  const MAX_RUN_RETRIES = 3;
+
+  const freshConcepts = await context.db
     .select()
     .from(designConcepts)
     .where(eq(designConcepts.status, "moderated"))
     .all();
+
+  const retriableConcepts = await context.db
+    .select()
+    .from(designConcepts)
+    .where(eq(designConcepts.status, "failed"))
+    .all();
+
+  // Only retry concepts that haven't exceeded the cross-run attempt cap.
+  // We count how many failed image records exist per concept across all runs.
+  const retrying: typeof freshConcepts = [];
+  for (const c of retriableConcepts) {
+    const failedImages = await context.db
+      .select({ count: sql<number>`count(*)` })
+      .from(generatedImages)
+      .where(eq(generatedImages.designConceptId, c.id))
+      .get();
+    const totalRunAttempts = Math.ceil((failedImages?.count ?? 0) / 3); // 3 attempts per run
+    if (totalRunAttempts < MAX_RUN_RETRIES) {
+      retrying.push(c);
+    }
+  }
+
+  if (retrying.length > 0) {
+    log("info", `[Step 04] Retrying ${retrying.length} previously-failed concepts (self-heal)`);
+    // Reset their status so downstream logic treats them the same as fresh
+    await context.db
+      .update(designConcepts)
+      .set({ status: "moderated" })
+      .where(inArray(designConcepts.id, retrying.map((c) => c.id)));
+  }
+
+  const concepts = [...freshConcepts, ...retrying];
 
   if (concepts.length === 0) {
     return { status: "completed", message: "No concepts ready for image generation" };
